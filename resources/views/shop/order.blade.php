@@ -2,7 +2,7 @@
 @section('title', '訂單狀態')
 @section('head')
     @if (in_array($order->status, ['pending', 'paid'], true))
-        <meta http-equiv="refresh" content="3">
+        <meta http-equiv="refresh" content="1">
     @endif
 @endsection
 @section('content')
@@ -16,10 +16,20 @@
         <dt>狀態</dt><dd><strong>{{ $order->playerStatusLabel() }}</strong></dd>
     </dl>
     @if (in_array($order->status, ['pending', 'paid'], true))
-        <p class="muted">以金流通知為準，頁面會自動更新。</p>
+        <p class="muted">以金流通知為準，頁面會自動更新；入帳完成後會回到玩家中心。</p>
     @endif
-    @if ($order->status === 'pending')
-        <div class="actions"><a class="button secondary" href="{{ route('mock.pay.show', $order->order_no) }}">回付款頁</a></div>
+    @if ($order->status === 'failed' && $order->failure_code === 'card_declined')
+        <p class="muted">這筆交易沒有扣款。請洽詢發卡銀行，或回方案頁重新下單，改用其他卡片或付款方式。</p>
     @endif
+    <div class="actions">
+        @if ($order->status === 'failed')
+            <a class="button" href="{{ route('shop.index') }}">重新選擇方案</a>
+            <a class="button secondary" href="{{ route('shop.support.index', ['order' => $order->order_no, 'category' => 'topup']) }}">聯繫客服</a>
+        @endif
+        @if ($order->status === 'pending')
+            <a class="button secondary" href="{{ route('mock.pay.show', $order->order_no) }}">回付款頁</a>
+        @endif
+        <a class="button secondary" href="{{ route('shop.back-to-game') }}">回玩家中心</a>
+    </div>
 </div>
 @endsection

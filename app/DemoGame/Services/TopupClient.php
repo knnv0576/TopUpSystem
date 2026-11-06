@@ -25,6 +25,22 @@ class TopupClient
         return $this->send("/api/topup/players/$playerId/refund-requests", [])->throw()->json('data') ?? [];
     }
 
+    public function bankAccounts(int $playerId): array
+    {
+        return $this->send("/api/topup/players/$playerId/bank-accounts", [])->throw()->json('data') ?? [];
+    }
+
+    public function addBankAccount(int $playerId, array $data): Response
+    {
+        return $this->send("/api/topup/players/$playerId/bank-accounts/add", $data);
+    }
+
+    /** @throws \Illuminate\Http\Client\RequestException */
+    public function deleteBankAccount(int $playerId, int $accountId): void
+    {
+        $this->send("/api/topup/players/$playerId/bank-accounts/$accountId/delete", [])->throw();
+    }
+
     public function orders(int $playerId): array
     {
         return $this->send("/api/topup/players/$playerId/orders", [])->throw()->json('data') ?? [];

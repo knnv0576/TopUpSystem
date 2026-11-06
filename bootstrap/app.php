@@ -31,7 +31,8 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->validateCsrfTokens(except: ['shop/sso']);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
-        $exceptions->dontFlash(['password', 'password_confirmation', 'bank_account', 'code']);
+        // 卡號與安全碼不寫入 session，驗證失敗時要重新輸入。
+        $exceptions->dontFlash(['password', 'password_confirmation', 'bank_account', 'code', 'card_number', 'card_cvv']);
         $exceptions->shouldRenderJsonWhen(
             fn (Request $request) => $request->is('api/*', 'webhooks/*') || $request->expectsJson(),
         );

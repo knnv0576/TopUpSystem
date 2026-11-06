@@ -19,6 +19,9 @@ class Order extends Model
         'failed' => '付款失敗',
     ];
 
+    /** 金流通知可帶的失敗原因代碼。 */
+    public const FAILURE_CODES = ['card_declined'];
+
     protected $guarded = [];
 
     protected $casts = ['amount' => 'integer', 'points' => 'integer', 'expires_at' => 'datetime'];
@@ -40,12 +43,18 @@ class Order extends Model
 
     public function statusLabel(): string
     {
-        return self::STATUS_LABELS[$this->status] ?? $this->status;
+        $label = self::STATUS_LABELS[$this->status] ?? $this->status;
+
+        return $this->status === 'failed' && $this->failure_code === 'card_declined' ? $label.'（發卡行拒絕）' : $label;
     }
 
     /** 玩家看到的失敗不分原因；實際狀態只在後台顯示。 */
     public function playerStatusLabel(): string
     {
+        if ($this->status === 'failed' && $this->failure_code === 'card_declined') {
+            return PlayerMessages::CARD_DECLINED;
+        }
+
         return $this->failedForPlayer() ? PlayerMessages::TOPUP_FAILED : $this->statusLabel();
     }
 

@@ -33,6 +33,9 @@ Route::prefix('api/points')->middleware(['throttle:600,1', 'api.signature:game_a
 Route::prefix('api/topup')->middleware(['throttle:600,1', 'api.signature:topup_api_secret'])->group(function () {
     Route::post('refund-requests', [TopupApiController::class, 'submitRefund']);
     Route::post('players/{gamePlayerId}/refund-requests', [TopupApiController::class, 'refundRequests'])->whereNumber('gamePlayerId');
+    Route::post('players/{gamePlayerId}/bank-accounts', [TopupApiController::class, 'bankAccounts'])->whereNumber('gamePlayerId');
+    Route::post('players/{gamePlayerId}/bank-accounts/add', [TopupApiController::class, 'addBankAccount'])->whereNumber('gamePlayerId');
+    Route::post('players/{gamePlayerId}/bank-accounts/{accountId}/delete', [TopupApiController::class, 'deleteBankAccount'])->whereNumber(['gamePlayerId', 'accountId']);
     Route::post('players/{gamePlayerId}/revoke-sessions', [TopupApiController::class, 'revokeSessions'])->whereNumber('gamePlayerId');
     Route::post('players/{gamePlayerId}/orders', [TopupApiController::class, 'orders'])->whereNumber('gamePlayerId');
     Route::post('packages', [TopupApiController::class, 'packages']);

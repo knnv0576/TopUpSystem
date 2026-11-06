@@ -54,7 +54,8 @@ class ShopController
         $request->session()->put(EnsureShopPlayer::LOGIN_AT_KEY, now()->timestamp);
         AuditLog::record('shop.login', $player, ['actor_type' => 'player', 'actor' => (string) $claims['sub']]);
 
-        return redirect()->route('shop.index');
+        // 只接受固定的目的地，避免被當成任意轉址。
+        return redirect()->route($request->input('next') === 'support' ? 'shop.support.index' : 'shop.index');
     }
 
     public function index(): View
@@ -64,7 +65,7 @@ class ShopController
 
     public function createOrder(Request $request, OrderService $orders, PaymentGateway $gateway): RedirectResponse
     {
-        $data = $request->validate(['package_id' => 'required|integer']);
+        $data = $request->validate(['package_id' => 'required|integer', 'method' => 'nullable|in:card,atm,cvs'], ['package_id.required' => '請選擇儲值方案']);
         $package = Package::find($data['package_id']);
         if (! $package) {
             return back()->withErrors(['package_id' => '找不到這個方案']);
@@ -76,13 +77,28 @@ class ShopController
             return back()->withErrors(['package_id' => $e->getMessage()]);
         }
 
-        return redirect()->away($gateway->createCheckout($order));
+        // 付款方式只是付款頁預設打開的分頁，不影響訂單內容。
+        $checkout = $gateway->createCheckout($order);
+
+        return redirect()->away(isset($data['method']) ? $checkout.'?method='.$data['method'] : $checkout);
     }
 
     /** 只顯示狀態，不作為付款依據。 */
-    public function showOrder(string $orderNo): View
+    /** 剛付款的訂單完成後直接回玩家中心；之後再開訂單頁則照常顯示。 */
+    public const RETURN_AFTER_ORDER = 'shop.return_after_order';
+
+    public function showOrder(Request $request, string $orderNo): View|RedirectResponse
     {
-        return view('shop.order', ['order' => $this->ownOrder($orderNo)]);
+        $order = $this->ownOrder($orderNo);
+
+        if ($order->status === 'fulfilled' && $request->session()->get(self::RETURN_AFTER_ORDER) === $order->order_no) {
+            $request->session()->forget(self::RETURN_AFTER_ORDER);
+
+            return redirect()->route('game.dashboard')
+                ->with('status', '充值完成，已入帳 '.number_format($order->points)." 點（訂單 {$order->order_no}）");
+        }
+
+        return view('shop.order', ['order' => $order]);
     }
 
     public function backToGame(): RedirectResponse

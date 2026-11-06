@@ -115,7 +115,8 @@
     async function showRound(data) {
       if (data.state === 'crediting' || data.state === 'settled') {
         rotateTo(data.roll);
-        await sleep(SPIN_MS);
+        // 系統設定減少動態效果時轉盤沒有動畫，不必等。
+        await sleep(window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : SPIN_MS);
         setMessage(message, data.state === 'crediting' ? data.message + '（入帳中）' : data.message, data.outcome);
       } else if (data.state === 'processing') {
         setMessage(message, data.message, 'pending');

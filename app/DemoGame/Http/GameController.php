@@ -67,6 +67,12 @@ class GameController
     /** 產生單次 token，用自動送出的表單 POST 給充值網站，token 不會留在網址。 */
     public function goShop(): View
     {
-        return view('game.go-shop', ['token' => SsoToken::issue(Auth::guard('game')->id())]);
+        return view('game.go-shop', ['token' => SsoToken::issue(Auth::guard('game')->id()), 'next' => null, 'title' => '前往充值網站']);
+    }
+
+    /** 客服頁在充值網站，同樣用單次 token 登入後轉過去。 */
+    public function goSupport(): View
+    {
+        return view('game.go-shop', ['token' => SsoToken::issue(Auth::guard('game')->id()), 'next' => 'support', 'title' => '前往客服支援']);
     }
 }

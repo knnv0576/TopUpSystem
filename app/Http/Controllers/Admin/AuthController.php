@@ -7,6 +7,7 @@ use App\Models\AuditLog;
 use App\Services\TotpService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rules\Password;
@@ -58,7 +59,7 @@ class AuthController
         return redirect()->route('admin.totp');
     }
 
-    public function showTotp(Request $request, TotpService $totp): View|RedirectResponse
+    public function showTotp(Request $request, TotpService $totp): Response|RedirectResponse
     {
         $admin = $this->pendingAdmin($request);
         if (! $admin) {
@@ -70,11 +71,16 @@ class AuthController
             $admin->update(['totp_secret' => $totp->generateSecret()]);
         }
 
-        return view('admin.totp', [
+        $uri = $admin->totp_confirmed_at ? null : $totp->provisioningUri($admin, $admin->totp_secret);
+
+        // 頁面含有密鑰，不讓瀏覽器或代理伺服器快取。
+        return response()->view('admin.totp', [
             'setup' => ! $admin->totp_confirmed_at,
             'secret' => $admin->totp_confirmed_at ? null : $admin->totp_secret,
-            'uri' => $admin->totp_confirmed_at ? null : $totp->provisioningUri($admin, $admin->totp_secret),
-        ]);
+            'uri' => $uri,
+            'qr' => $uri ? $totp->qrSvg($uri) : null,
+            'username' => $admin->username,
+        ])->header('Cache-Control', 'no-store, private');
     }
 
     public function verifyTotp(Request $request, TotpService $totp): RedirectResponse

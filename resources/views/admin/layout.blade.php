@@ -9,6 +9,7 @@
         <a href="{{ route('admin.players') }}">玩家</a>
         <a href="{{ route('admin.packages') }}">方案</a>
         <a href="{{ route('admin.minigame') }}">小遊戲</a>
+        <a href="{{ route('admin.support') }}">客服工單@php($openTickets = \App\Models\SupportTicket::where('status', 'open')->count())@if ($openTickets > 0) <span class="badge warn">{{ $openTickets }}</span>@endif</a>
         <a href="{{ route('admin.anomalies') }}">異常清單</a>
         <a href="{{ route('admin.audit') }}">稽核紀錄</a>
         @if (auth('admin')->user()->isSupervisor())

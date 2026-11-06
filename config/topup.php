@@ -4,6 +4,10 @@ return [
     // 固定匯率與退款規則。
     'points_per_twd' => 100,
     'refund_min_points' => 10000,
+    // 送出退款後最多等多久讓背景工作完成凍結，畫面上的可用點數才會立即正確（毫秒）。
+    'refund_freeze_wait_ms' => 3000,
+    // 客服信箱：新工單與玩家回覆的通知寄到這裡（本機 Mailpit）。
+    'support_inbox' => env('SUPPORT_INBOX', 'support@topup-demo.test'),
     'refund_points_step' => 100,
 
     'internal_api_url' => env('INTERNAL_API_URL', 'http://web'),

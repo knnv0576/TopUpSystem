@@ -1,0 +1,2 @@
+圖示取自 simple-icons 16.36.0（CC0-1.0，https://simpleicons.org）。
+商標屬各品牌所有，這裡只用來標示本 DEMO 的模擬付款頁接受哪些卡別，不代表與各品牌有合作關係。

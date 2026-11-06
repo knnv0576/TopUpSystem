@@ -6,6 +6,8 @@ x-php: &php
     dockerfile: docker/php/Dockerfile
   volumes:
     - .:/var/www/html
+    # 套件放在 Docker volume：F 槽經由 9p 共享，讀 8,000 多個套件檔非常慢。
+    - vendor:/var/www/html/vendor
   restart: unless-stopped
 
 services:
@@ -15,7 +17,11 @@ services:
     user: root
     volumes:
       - .:/var/www/html
+      - vendor:/var/www/html/vendor
       - certs:/certs
+    environment:
+      COMPOSER_HOME: /tmp/composer
+      COMPOSER_ALLOW_SUPERUSER: "1"
     command:
       - sh
       - -c
@@ -24,6 +30,11 @@ services:
           -keyout /certs/server.key -out /certs/server.crt -subj "/CN=localhost" \
           -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
         chmod 644 /certs/server.crt /certs/server.key
+        # composer.lock 有變動（或 volume 是空的）才重新安裝套件。
+        lock=$$(sha256sum composer.lock | cut -d" " -f1)
+        if [ "$$(cat vendor/.composer-lock-hash 2>/dev/null)" != "$$lock" ]; then
+          composer install --no-interaction --no-progress --optimize-autoloader && echo "$$lock" > vendor/.composer-lock-hash
+        fi
         chown -R www-data:www-data /var/www/html
 
   app:
@@ -67,6 +78,15 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  # 本機信箱：接住系統寄出的所有信，不會真的寄出。網頁介面只開在 127.0.0.1:8025，SMTP 只在 Docker 內部。
+  mailpit:
+    image: axllent/mailpit:v1.27@sha256:e22dce5b36f93c77082e204a3942fb6b283b7896e057458400a4c88344c3df68
+    ports:
+      - "127.0.0.1:8025:8025"
+    environment:
+      MP_MAX_MESSAGES: 500
+    restart: unless-stopped
+
   postgres:
     image: postgres:18-alpine@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5
     environment:
@@ -94,3 +114,4 @@ networks:
 volumes:
   pgdata:
   certs:
+  vendor:

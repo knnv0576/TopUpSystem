@@ -28,6 +28,7 @@ class MockGateway implements PaymentGateway
     public const PAYMENT_SCENARIOS = [
         'success' => '付款成功',
         'failed' => '付款失敗',
+        'declined' => '付款失敗（發卡行拒絕交易）',
         'delayed' => '付款成功（延遲通知）',
         'duplicate' => '付款成功（重複通知）',
         'bad_signature' => '錯誤簽章',
@@ -44,6 +45,19 @@ class MockGateway implements PaymentGateway
     public function name(): string
     {
         return 'mock';
+    }
+
+    /**
+     * 模擬銀行的帳戶驗證。規則和測試卡號一樣用帳號結尾決定：
+     * 9999 查無帳號、8888 戶名不符；7777 可以綁定，但撥款後會被退匯（見 payout）。
+     */
+    public function verifyAccount(string $bankCode, string $account, string $holderName): string
+    {
+        return match (true) {
+            str_ends_with($account, '9999') => 'account_not_found',
+            str_ends_with($account, '8888') => 'name_mismatch',
+            default => 'matched',
+        };
     }
 
     public function createCheckout(Order $order): string
@@ -71,18 +85,21 @@ class MockGateway implements PaymentGateway
             'payout_key' => $data['payout_key'] ?? null,
             'amount' => (int) $data['amount'],
             'currency' => (string) $data['currency'],
+            'failure_code' => isset($data['failure_code']) ? (string) $data['failure_code'] : null,
         ];
     }
 
     public function payout(string $idempotencyKey, int $amount, string $bankCode, string $account): string
     {
         $result = Cache::pull(self::NEXT_PAYOUT_CACHE_KEY, 'success');
+        // 帳號結尾 7777：撥款先成功，之後銀行通知退匯。
+        $returned = $result === 'success' && str_ends_with($account, '7777');
 
         if ($result === 'error') {
             throw new RuntimeException('模擬金流暫時無法連線');
         }
 
-        return DB::transaction(function () use ($idempotencyKey, $amount, $result) {
+        return DB::transaction(function () use ($idempotencyKey, $amount, $result, $returned) {
             DB::table('mock_payouts')->insertOrIgnore([
                 'idempotency_key' => $idempotencyKey,
                 'provider_txn_id' => 'MPO'.Str::upper(Str::random(16)),
@@ -96,18 +113,21 @@ class MockGateway implements PaymentGateway
             $row = DB::table('mock_payouts')->where('idempotency_key', $idempotencyKey)->lockForUpdate()->first();
 
             // 已成功的撥款不再付款，只重送成功結果。
-            if ($row->status === 'succeeded') {
+            if (in_array($row->status, ['succeeded', 'returned'], true)) {
                 $this->dispatchPayoutEvent($idempotencyKey, $row->provider_txn_id, $amount, 'success');
 
                 return $row->provider_txn_id;
             }
 
             DB::table('mock_payouts')->where('id', $row->id)->update([
-                'status' => $result === 'failed' ? 'failed' : 'succeeded',
+                'status' => $result === 'failed' ? 'failed' : ($returned ? 'returned' : 'succeeded'),
                 'attempts' => $row->attempts + 1,
                 'updated_at' => now(),
             ]);
             $this->dispatchPayoutEvent($idempotencyKey, $row->provider_txn_id, $amount, $result);
+            if ($returned) {
+                $this->dispatchPayoutEvent($idempotencyKey, $row->provider_txn_id, $amount, 'returned');
+            }
 
             return $row->provider_txn_id;
         });
@@ -122,7 +142,7 @@ class MockGateway implements PaymentGateway
     public function simulatePayment(Order $order, string $scenario): void
     {
         $txnId = 'MTX'.Str::upper(Str::random(16));
-        $event = fn (string $type, int $amount) => [
+        $event = fn (string $type, int $amount, array $extra = []) => $extra + [
             'event_id' => (string) Str::uuid(),
             'type' => $type,
             'order_no' => $order->order_no,
@@ -133,6 +153,7 @@ class MockGateway implements PaymentGateway
 
         match ($scenario) {
             'failed' => DeliverMockWebhook::dispatch($event('payment.failed', $order->amount)),
+            'declined' => DeliverMockWebhook::dispatch($event('payment.failed', $order->amount, ['failure_code' => 'card_declined'])),
             'delayed' => DeliverMockWebhook::dispatch($event('payment.succeeded', $order->amount))->delay(now()->addSeconds(config('topup.mock_delay_seconds'))),
             'duplicate' => (function () use ($event, $order) {
                 $payload = $event('payment.succeeded', $order->amount);
@@ -154,14 +175,19 @@ class MockGateway implements PaymentGateway
     {
         $job = DeliverMockWebhook::dispatch([
             'event_id' => (string) Str::uuid(),
-            'type' => $result === 'failed' ? 'payout.failed' : 'payout.succeeded',
+            'type' => match ($result) {
+                'failed' => 'payout.failed',
+                'returned' => 'payout.returned',
+                default => 'payout.succeeded',
+            },
             'payout_key' => $key,
             'provider_txn_id' => $txnId,
             'amount' => $amount,
             'currency' => 'TWD',
         ])->afterCommit();
 
-        if ($result === 'delayed') {
+        // 退匯在撥款成功之後才通知。
+        if ($result === 'delayed' || $result === 'returned') {
             $job->delay(now()->addSeconds(config('topup.mock_delay_seconds')));
         }
     }

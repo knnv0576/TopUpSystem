@@ -15,7 +15,7 @@ use RuntimeException;
 class DemoTools
 {
     private const RESET_TABLES = [
-        'minigame_rounds', 'game_red_packets', 'game_point_ledger', 'game_wallets', 'game_players',
+        'support_messages', 'support_tickets', 'player_bank_accounts', 'minigame_rounds', 'game_red_packets', 'game_point_ledger', 'game_wallets', 'game_players',
         'payouts', 'refund_requests', 'point_adjustments', 'point_grants', 'payments', 'orders',
         'gateway_events', 'anomalies', 'sso_tokens', 'api_nonces', 'mock_payouts', 'players',
         'jobs', 'failed_jobs',

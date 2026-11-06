@@ -140,14 +140,22 @@ class PaymentFlowTest extends TestCase
         $player = $this->player();
         $shopPlayer = Player::forGame($player->id);
 
-        $cases = ['success' => 'fulfilled', 'duplicate' => 'fulfilled', 'failed' => 'failed', 'bad_signature' => 'pending', 'amount_mismatch' => 'pending'];
-        foreach ($cases as $scenario => $status) {
+        // 信用卡的結果由測試卡號決定；竄改通知的情境走進階測試表單。
+        $card = fn (string $number) => ['method' => 'card', 'card_name' => 'TEST USER', 'card_number' => $number, 'card_expiry' => now()->addYear()->format('m/y'), 'card_cvv' => '123'];
+        $cases = [
+            'success' => [$card('4111 1111 1111 1111'), 'fulfilled'],
+            'duplicate' => [$card('4000000000000044'), 'fulfilled'],
+            'failed' => [$card('4000-0000-0000-0002'), 'failed'],
+            'bad_signature' => [['method' => 'advanced', 'scenario' => 'bad_signature'], 'pending'],
+            'amount_mismatch' => [['method' => 'advanced', 'scenario' => 'amount_mismatch'], 'pending'],
+        ];
+        foreach ($cases as $scenario => [$form, $status]) {
             $before = $this->wallet($player)[0];
             $order = $this->order($player, 100);
 
             $this->actingAs($shopPlayer, 'shop')
-                ->post(route('mock.pay.submit', $order->order_no), ['scenario' => $scenario])
-                ->assertRedirect();
+                ->post(route('mock.pay.submit', $order->order_no), $form)
+                ->assertRedirect(route('shop.orders.show', $order->order_no));
 
             $this->assertSame($status, $order->fresh()->status, $scenario);
             $this->assertSame($before + ($status === 'fulfilled' ? 10000 : 0), $this->wallet($player)[0], $scenario);

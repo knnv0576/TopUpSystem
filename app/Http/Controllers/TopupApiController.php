@@ -6,7 +6,9 @@ use App\Models\AuditLog;
 use App\Models\Order;
 use App\Models\Package;
 use App\Models\Player;
+use App\Models\PlayerBankAccount;
 use App\Models\RefundRequest;
+use App\Services\BankAccountService;
 use App\Services\GameTopupService;
 use App\Services\RefundService;
 use Illuminate\Http\JsonResponse;
@@ -22,17 +24,56 @@ class TopupApiController
             'game_request_id' => 'required|uuid',
             'game_player_id' => 'required|integer|min:1',
             'points' => 'required|integer|min:1',
-            'bank_code' => 'required|digits:3',
-            'bank_account' => 'required|digits_between:6,16',
+            'bank_account_id' => 'required|integer|min:1',
         ]);
 
+        // 撥款帳戶只能從玩家自己綁定的帳戶選，不接受直接傳入帳號。
+        $player = Player::forGame($data['game_player_id']);
+        $bankAccount = PlayerBankAccount::where('player_id', $player->id)->find($data['bank_account_id']);
+        if (! $bankAccount) {
+            return response()->json(['error' => '找不到這個撥款帳戶，請重新選擇'], 422);
+        }
+        if (! $bankAccount->usable()) {
+            return response()->json(['error' => '這個帳戶曾被銀行退匯，請刪除後重新綁定正確的帳戶'], 422);
+        }
+
         try {
-            $refund = $refunds->submit($data['game_request_id'], $data['game_player_id'], $data['points'], $data['bank_code'], $data['bank_account']);
+            $refund = $refunds->submit($data['game_request_id'], $data['game_player_id'], $data['points'], $bankAccount->bank_code, $bankAccount->account_encrypted, $bankAccount);
         } catch (RuntimeException $e) {
             return response()->json(['error' => $e->getMessage()], 422);
         }
 
         return response()->json($this->present($refund), 201);
+    }
+
+    public function bankAccounts(int $gamePlayerId, BankAccountService $accounts): JsonResponse
+    {
+        return response()->json(['data' => $accounts->list(Player::forGame($gamePlayerId))->map->present()->values()]);
+    }
+
+    public function addBankAccount(Request $request, int $gamePlayerId, BankAccountService $accounts): JsonResponse
+    {
+        $data = $request->validate([
+            'label' => 'required|string|max:30',
+            'bank_code' => 'required|digits:3',
+            'bank_account' => 'required|digits_between:6,16',
+            'holder_name' => ['required', 'string', 'max:50', 'regex:/^[\p{Han}A-Za-z][\p{Han}A-Za-z ·.\-]{1,49}$/u'],
+        ]);
+
+        try {
+            $account = $accounts->add(Player::forGame($gamePlayerId), $data['label'], $data['bank_code'], $data['bank_account'], $data['holder_name']);
+        } catch (RuntimeException $e) {
+            return response()->json(['error' => $e->getMessage()], 422);
+        }
+
+        return response()->json($account->present(), 201);
+    }
+
+    public function deleteBankAccount(int $gamePlayerId, int $accountId, BankAccountService $accounts): JsonResponse
+    {
+        $accounts->remove(Player::forGame($gamePlayerId), $accountId);
+
+        return response()->json(['ok' => true]);
     }
 
     /** 玩家改密碼：這個時間之前建立的充值網站 session 全部失效。 */
@@ -132,6 +173,8 @@ class TopupApiController
             'status' => RefundRequest::PLAYER_LABELS[$refund->status] ?? '處理中',
             'reason' => in_array($refund->status, ['rejected', 'closed_points_returned'], true) ? $refund->reject_reason : null,
             'account' => $refund->maskedAccount(),
+            'account_label' => $refund->bank_label,
+            'freezing' => $refund->status === 'pending_freeze',
             'created_at' => $refund->created_at->toIso8601String(),
         ];
     }

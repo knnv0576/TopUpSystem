@@ -84,3 +84,69 @@ details.fairness { font-size:.9rem; margin-top:.6rem; }
 form.filters { display:flex; flex-wrap:wrap; gap:.3rem .8rem; align-items:flex-end; margin-bottom:.8rem; }
 form.filters input,form.filters select { width:auto; }
 td.seeds { font-size:.8rem; }
+
+/* 模擬付款頁：以單選鈕切換付款方式，不需要腳本 */
+.pay-tabs .tab-radio { position:absolute; opacity:0; pointer-events:none; }
+.tab-labels { display:flex; gap:.4rem; border-bottom:1px solid var(--line); margin:-.2rem 0 1rem; }
+.tab-labels label { margin:0; padding:.45rem .9rem; border:1px solid transparent; border-bottom:none; border-radius:6px 6px 0 0; cursor:pointer; color:var(--muted); }
+.tab-labels label:hover { color:var(--ink); }
+#tab-card:checked ~ .tab-labels label[for=tab-card],
+#tab-atm:checked ~ .tab-labels label[for=tab-atm],
+#tab-cvs:checked ~ .tab-labels label[for=tab-cvs] { color:var(--brand); font-weight:700; border-color:var(--line); background:var(--card); margin-bottom:-1px; }
+#tab-card:focus-visible ~ .tab-labels label[for=tab-card],
+#tab-atm:focus-visible ~ .tab-labels label[for=tab-atm],
+#tab-cvs:focus-visible ~ .tab-labels label[for=tab-cvs] { outline:2px solid var(--brand); }
+.pay-panel { display:none; }
+#tab-card:checked ~ .panel-card, #tab-atm:checked ~ .panel-atm, #tab-cvs:checked ~ .panel-cvs { display:block; }
+.field-row { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,204px)); gap:0 .8rem; }
+.field-error { color:var(--brand-dark); font-size:.85rem; margin:.15rem 0 0; min-height:1.2em; }
+input[aria-invalid=true] { border-color:var(--brand); background:#fffbfa; }
+.card-brand { margin-left:.4rem; font-size:.8rem; font-weight:700; color:var(--ok); }
+.test-cards-title { margin-top:1.4rem; }
+table.test-cards td { vertical-align:middle; }
+button.small { padding:.15rem .6rem; font-size:.85rem; }
+details.advanced { margin-top:1rem; border-top:1px solid var(--line); padding-top:.6rem; }
+details.advanced summary { cursor:pointer; color:var(--muted); }
+h2.sub { margin-top:1.2rem; }
+
+/* 充值網站頁尾：客服入口與接受的付款方式 */
+.site-footer { background:#1f2933; color:#cbd2d9; margin-top:2rem; }
+.footer-inner { max-width:1040px; margin:0 auto; padding:1.4rem 1rem 1.6rem; display:flex; flex-wrap:wrap; gap:1.5rem 4rem; }
+.footer-col h3 { font-size:.9rem; color:#9aa5b1; margin:0 0 .5rem; font-weight:600; }
+.footer-link { color:#fff; font-weight:700; text-decoration:underline; text-underline-offset:3px; }
+.footer-link:hover { color:#fecdca; }
+.pay-logos { list-style:none; display:flex; flex-wrap:wrap; gap:.45rem; margin:0; padding:0; }
+.pay-logos li { background:#fff; border-radius:4px; width:64px; height:40px; display:flex; align-items:center; justify-content:center; }
+.pay-logos img { width:32px; height:32px; }
+.pay-logos li.pay-text { width:auto; padding:0 .6rem; color:#1f2933; font-size:.8rem; font-weight:700; }
+.footer-note { font-size:.78rem; color:#9aa5b1; margin:.6rem 0 0; max-width:440px; }
+
+/* 客服往來紀錄 */
+ol.thread { list-style:none; margin:0 0 1rem; padding:0; display:grid; gap:.6rem; }
+.thread-item { border:1px solid var(--line); border-radius:8px; padding:.6rem .8rem; max-width:760px; }
+.thread-item.from-staff { background:#f0f6fb; border-color:#c9dcec; }
+.thread-item.from-player { background:var(--card); }
+.thread-meta { font-size:.85rem; color:var(--muted); margin-bottom:.25rem; }
+.thread-body { white-space:pre-wrap; word-break:break-word; }
+textarea { max-width:640px; }
+
+/* TOTP 綁定：QR Code 與手動輸入的金鑰 */
+.totp-setup { display:flex; flex-wrap:wrap; gap:1rem 1.5rem; align-items:flex-start; margin:.6rem 0 1rem; }
+.totp-qr { margin:0; padding:10px; background:#fff; border:1px solid var(--line); border-radius:8px; line-height:0; }
+.totp-qr svg { width:220px; height:220px; max-height:none; }
+.totp-secret { letter-spacing:.05em; }
+
+/* 列表的操作欄：按鈕不換行，靠右對齊 */
+td.row-action { white-space:nowrap; text-align:right; vertical-align:middle; }
+td.row-action .button { padding:.25rem .8rem; font-size:.88rem; }
+
+/* 退款：選擇撥款帳戶 */
+fieldset.account-pick { border:1px solid var(--line); border-radius:8px; padding:.4rem .8rem .7rem; margin:.8rem 0 .4rem; max-width:640px; }
+fieldset.account-pick legend { padding:0 .3rem; font-size:.92rem; }
+label.account-option { display:flex; gap:.6rem; align-items:center; margin:.35rem 0; padding:.45rem .6rem; border:1px solid var(--line); border-radius:6px; cursor:pointer; }
+label.account-option:has(input:checked) { border-color:var(--brand); }
+label.account-option > span { display:flex; flex-direction:column; line-height:1.35; }
+details.add-account { margin-top:1rem; }
+details.add-account summary { cursor:pointer; font-weight:600; }
+
+.is-disabled { opacity:.6; cursor:not-allowed; }

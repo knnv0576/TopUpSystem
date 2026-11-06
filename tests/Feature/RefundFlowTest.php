@@ -412,13 +412,13 @@ class RefundFlowTest extends TestCase
     public function test_player_web_requires_acknowledgement_and_has_no_withdraw_route(): void
     {
         $player = $this->player('alice', 50000);
-        $form = ['request_id' => (string) Str::uuid(), 'points' => 10000, 'bank_code' => '812', 'bank_account' => '1234567890'];
+        $form = ['request_id' => (string) Str::uuid(), 'points' => 10000, 'bank_account_id' => $this->bankAccount($player)->id];
 
         $this->actingAs($player, 'game')->post(route('game.refunds.submit'), $form + ['acknowledged' => ''])
             ->assertSessionHasErrors('acknowledged');
         $this->assertSame(0, RefundRequest::count());
 
-        foreach (['points' => 9900, 'bank_code' => '81', 'bank_account' => '123'] as $field => $bad) {
+        foreach (['points' => 9900, 'bank_account_id' => ''] as $field => $bad) {
             $this->actingAs($player, 'game')->post(route('game.refunds.submit'), array_merge($form, [$field => $bad, 'acknowledged' => '1']))
                 ->assertSessionHasErrors($field);
         }
@@ -433,6 +433,44 @@ class RefundFlowTest extends TestCase
         $routes = collect(\Illuminate\Support\Facades\Route::getRoutes())->map(fn ($r) => $r->uri())->implode("\n");
         $this->assertStringNotContainsString('withdraw', $routes);
         $this->assertStringNotContainsString('cancel', $routes);
+    }
+
+    public function test_available_points_are_updated_right_after_submitting(): void
+    {
+        $player = $this->player('alice', 50000);
+        $form = ['points' => 20000, 'bank_account_id' => $this->bankAccount($player)->id, 'acknowledged' => '1'];
+
+        // 凍結完成後才跳轉，退款頁的可用點數已扣除。
+        $this->actingAs($player, 'game')->post(route('game.refunds.submit'), $form + ['request_id' => (string) Str::uuid()])
+            ->assertRedirect(route('game.refunds'))
+            ->assertSessionHas('status', '退款申請已送出，已凍結 20,000 點');
+        $this->actingAs($player->fresh(), 'game')->get(route('game.refunds'))
+            ->assertSee('可用點數 30,000 點')->assertDontSee('正在凍結');
+
+        // 背景工作還沒完成時不等太久，退款頁顯示凍結中並自動更新。
+        config(['topup.refund_freeze_wait_ms' => 0]);
+        \Illuminate\Support\Facades\Queue::fake();
+        $bob = $this->player('bob', 50000);   // 一位玩家同時只能有一筆進行中的申請
+        $this->actingAs($bob, 'game')->post(route('game.refunds.submit'), ['request_id' => (string) Str::uuid(), 'bank_account_id' => $this->bankAccount($bob)->id] + $form)
+            ->assertSessionHasNoErrors()->assertSessionHas('status', '退款申請已送出，點數凍結處理中，頁面會自動更新');
+        $this->actingAs($bob->fresh(), 'game')->get(route('game.refunds'))
+            ->assertSee('有 20,000 點正在凍結')->assertSee('http-equiv="refresh"', false);
+    }
+
+    public function test_refund_list_shows_the_action_for_each_role(): void
+    {
+        $review = $this->submitRefund($this->player('alice', 50000));
+        $second = $this->submitRefund($this->player('bob', 50000));
+        $second->update(['status' => 'pending_supervisor']);
+        $show = fn ($r) => 'href="'.route('admin.refunds.show', $r).'">';
+
+        $html = $this->actingAs($this->admin('reviewer'), 'admin')->get(route('admin.refunds'))->assertOk()->getContent();
+        $this->assertStringContainsString('<a class="button" '.$show($review).'初審</a>', $html);
+        $this->assertStringContainsString('<a class="button secondary" '.$show($second).'查看</a>', $html);
+
+        $html = $this->actingAs($this->admin('supervisor'), 'admin')->get(route('admin.refunds'))->getContent();
+        $this->assertStringContainsString('<a class="button" '.$show($second).'覆核</a>', $html);
+        $this->assertStringContainsString('<a class="button secondary" '.$show($review).'查看</a>', $html);
     }
 
     public function test_full_audit_trail_is_recorded(): void

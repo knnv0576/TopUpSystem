@@ -11,6 +11,7 @@ use App\Models\AdminUser;
 use App\Models\Anomaly;
 use App\Models\AuditLog;
 use App\Models\Payout;
+use App\Models\PlayerBankAccount;
 use App\Models\Player;
 use App\Models\RefundRequest;
 use App\Payments\PaymentGateway;
@@ -31,7 +32,8 @@ class RefundService
      *
      * @throws RuntimeException 不符合申請規則
      */
-    public function submit(string $gameRequestId, int $gamePlayerId, int $points, string $bankCode, string $account): RefundRequest
+    /** $from 是玩家選的綁定帳戶；帳戶資料會複製到申請裡，之後刪除綁定不影響這筆撥款。 */
+    public function submit(string $gameRequestId, int $gamePlayerId, int $points, string $bankCode, string $account, ?PlayerBankAccount $from = null): RefundRequest
     {
         $existing = RefundRequest::where('game_request_id', $gameRequestId)->first();
         if ($existing) {
@@ -45,7 +47,7 @@ class RefundService
         $player = Player::forGame($gamePlayerId);
 
         try {
-            return DB::transaction(function () use ($gameRequestId, $player, $points, $bankCode, $account) {
+            return DB::transaction(function () use ($gameRequestId, $player, $points, $bankCode, $account, $from) {
                 $player = Player::whereKey($player->id)->lockForUpdate()->first();
                 if ($player->isSuspended()) {
                     throw new RuntimeException(PlayerMessages::SUSPENDED);
@@ -60,6 +62,9 @@ class RefundService
                     'bank_code' => $bankCode,
                     'account_last4' => substr($account, -4),
                     'account_encrypted' => $account,
+                    'bank_account_id' => $from?->id,
+                    'bank_label' => $from?->label,
+                    'holder_name_masked' => $from?->holder_name_masked,
                 ]);
                 Payout::create([
                     'refund_request_id' => $request->id,
@@ -242,6 +247,31 @@ class RefundService
         }
     }
 
+    /**
+     * 銀行退匯：撥款成功之後款項又被退回公司帳戶（例如帳戶已結清）。
+     * 點數已經扣掉、錢也回到公司，所以進入 payout_returned，由覆核者確認後結案還點；
+     * 該綁定帳戶標記為曾退匯，之後不能再選來退款。
+     */
+    public function payoutReturned(array $event): void
+    {
+        $payout = Payout::where('idempotency_key', $event['payout_key'])->first();
+        if (! $payout) {
+            return;
+        }
+
+        $request = RefundRequest::whereKey($payout->refund_request_id)->lockForUpdate()->first();
+        if (! $this->transition($request, ['paid_out'], 'payout_returned')) {
+            return;
+        }
+
+        $payout->update(['status' => 'returned']);
+        if ($request->bank_account_id) {
+            PlayerBankAccount::whereKey($request->bank_account_id)->update(['returned_at' => now()]);
+        }
+        Anomaly::raise('payout_returned', 'RefundRequest', $request->id, "撥款遭銀行退匯（{$event['provider_txn_id']}），款項已退回公司帳戶；請確認後結案還點");
+        AuditLog::record('refund.payout_returned', $request, ['from' => 'paid_out', 'to' => 'payout_returned', 'amount' => $request->amount, 'points' => $request->points]);
+    }
+
     /** 覆核者重試：回到 approved 後重新執行。扣點與撥款都冪等，不會重複。 */
     public function retryPayout(RefundRequest $request, AdminUser $admin): void
     {
@@ -267,10 +297,12 @@ class RefundService
         }
 
         DB::transaction(function () use ($request, $admin, $reason) {
-            if (! $this->transition($request, ['payout_failed'], 'closing', ['reject_reason' => $reason])) {
+            $from = $request->status;
+            // 撥款失敗，或撥款後被退匯（錢已回到公司），都可以結案還點。
+            if (! $this->transition($request, ['payout_failed', 'payout_returned'], 'closing', ['reject_reason' => $reason])) {
                 throw new RuntimeException('這筆申請目前不能結案');
             }
-            AuditLog::record('refund.closing', $request, ['from' => 'payout_failed', 'to' => 'closing', 'points' => $request->points, 'note' => $reason], $admin);
+            AuditLog::record('refund.closing', $request, ['from' => $from, 'to' => 'closing', 'points' => $request->points, 'note' => $reason], $admin);
         });
 
         $this->finishClosing($request->id);
@@ -336,6 +368,11 @@ class RefundService
                 match ($status) {
                     'succeeded' => DB::transaction(fn () => $this->payoutSucceeded($event)),
                     'failed' => DB::transaction(fn () => $this->payoutFailed($event)),
+                    // 成功通知與退匯通知都遺失：先補成功，再補退匯。
+                    'returned' => DB::transaction(function () use ($event) {
+                        $this->payoutSucceeded($event);
+                        $this->payoutReturned($event);
+                    }),
                     default => ExecutePayout::dispatch($request->id),
                 };
             });

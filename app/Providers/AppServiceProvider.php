@@ -25,6 +25,8 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        DemoGuard::assertLocalMail((string) config('mail.default'), config('mail.mailers.smtp.host'));
+
         // 依「端點 + 來源 IP」分開計數。內建的 throttle:次數,分鐘 會讓相同數字的端點共用額度，
         // 兩位管理員連續完成首次登入就會互相擋住。針對單一帳號的猜測由帳號鎖定處理。
         RateLimiter::for('auth', fn (Request $request) => Limit::perMinute(20)

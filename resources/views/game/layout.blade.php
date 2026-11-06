@@ -1,6 +1,8 @@
 @extends('layouts.app')
 
 @section('brand', '玩家中心')
+@section('body_class', 'theme-game')
+@section('styles')<link rel="stylesheet" href="/game-theme.css">@endsection
 
 @section('nav')
     @auth('game')
@@ -10,6 +12,7 @@
         <a href="{{ route('game.refunds') }}">退款</a>
         <a href="{{ route('game.ledger') }}">點數明細</a>
         <a href="{{ route('game.orders') }}">充值訂單</a>
+        <a href="{{ route('game.support') }}">客服</a>
     @endauth
 @endsection
 

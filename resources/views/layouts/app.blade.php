@@ -6,9 +6,10 @@
     <title>@yield('title', '點數充值 DEMO')</title>
     @yield('head')
     <link rel="stylesheet" href="/app.css">
+    @yield('styles')
     <script src="/app.js" defer></script>
 </head>
-<body>
+<body class="@yield('body_class')">
 <div class="demo-banner">DEMO 環境：所有金流皆為模擬，請勿輸入真實卡號、帳號或個人資料。</div>
 <header class="top">
     <div class="inner">
@@ -32,5 +33,8 @@
     @endif
     @yield('content')
 </main>
+@hasSection('footer')
+<footer class="site-footer">@yield('footer')</footer>
+@endif
 </body>
 </html>

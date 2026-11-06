@@ -4,6 +4,10 @@ namespace App\Services;
 
 use App\Models\AdminUser;
 use App\Models\AuditLog;
+use BaconQrCode\Renderer\Image\SvgImageBackEnd;
+use BaconQrCode\Renderer\ImageRenderer;
+use BaconQrCode\Renderer\RendererStyle\RendererStyle;
+use BaconQrCode\Writer;
 use Illuminate\Support\Facades\DB;
 use PragmaRX\Google2FA\Google2FA;
 
@@ -19,6 +23,16 @@ class TotpService
     public function provisioningUri(AdminUser $admin, string $secret): string
     {
         return $this->totp->getQRCodeUrl('TopUp DEMO', $admin->username, $secret);
+    }
+
+    /**
+     * 綁定用的 QR Code（內嵌 SVG）。在伺服器上產生，密鑰不會送到任何外部服務。
+     */
+    public function qrSvg(string $uri): string
+    {
+        $svg = (new Writer(new ImageRenderer(new RendererStyle(220, 2), new SvgImageBackEnd())))->writeString($uri);
+
+        return trim(preg_replace('/^<\?xml[^>]*>\s*/', '', $svg));
     }
 
     /** 驗證碼只能用一次：同一個時間步或更舊的代碼會被拒絕，防止重放。 */

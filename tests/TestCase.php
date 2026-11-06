@@ -124,6 +124,12 @@ abstract class TestCase extends BaseTestCase
             ->fresh();
     }
 
+    /** 幫玩家綁定一個撥款帳戶（直接呼叫充值端服務）。 */
+    protected function bankAccount(GamePlayer $player, string $bankCode = '812', string $account = '1234567890', string $label = '測試帳戶', string $holder = '王小明'): \App\Models\PlayerBankAccount
+    {
+        return app(\App\Services\BankAccountService::class)->add(Player::forGame($player->id), $label, $bankCode, $account, $holder);
+    }
+
     protected function wallet(GamePlayer $player): array
     {
         $wallet = $player->wallet()->first();

@@ -98,8 +98,13 @@ class AuthAndSecurityTest extends TestCase
         $this->post(route('admin.login'), ['username' => 'fresh', 'password' => 'Password123456'])->assertRedirect(route('admin.totp'));
 
         $secret = $admin->fresh()->totp_secret;
-        $this->get(route('admin.totp'))->assertOk();
+        $page = $this->get(route('admin.totp'))->assertOk();
         $this->assertNotNull($admin->fresh()->totp_secret);
+        // 綁定頁有 QR Code 與分組顯示的金鑰，且不能被快取。
+        $this->assertStringContainsString('<svg', $page->getContent());
+        $page->assertSee(trim(chunk_split($admin->fresh()->totp_secret, 4, ' ')));
+        $this->assertStringContainsString('no-store', (string) $page->headers->get('Cache-Control'));
+        $this->assertStringContainsString('otpauth://totp/', app(\App\Services\TotpService::class)->provisioningUri($admin, $admin->fresh()->totp_secret));
         $this->assertSame($secret ?? $admin->fresh()->totp_secret, $admin->fresh()->totp_secret);
         $this->assertNull($admin->fresh()->totp_confirmed_at);
         $this->assertStringNotContainsString($admin->fresh()->totp_secret, (string) \Illuminate\Support\Facades\DB::table('admin_users')->where('id', $admin->id)->value('totp_secret'));

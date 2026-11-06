@@ -50,7 +50,8 @@ async function totp(admin) {
 const num = (text) => Number(text.replace(/[^\d-]/g, ''));
 
 async function newActor(browser, name) {
-  const context = await browser.newContext({ ignoreHTTPSErrors: true, locale: 'zh-TW', viewport: { width: 1280, height: 900 } });
+  // 關閉動態效果：數字跑動與淡入動畫會讓讀值與截圖不穩定。
+  const context = await browser.newContext({ ignoreHTTPSErrors: true, locale: 'zh-TW', viewport: { width: 1280, height: 900 }, reducedMotion: 'reduce' });
   const page = await context.newPage();
   page.on('dialog', (d) => d.accept());
   page.on('console', (m) => { if (/Content Security Policy|Refused to/i.test(m.text())) check(`${name} 頁面沒有 CSP 違規`, false, m.text()); });
@@ -96,7 +97,7 @@ async function adminLogin(actor) {
 
   await submitAdminPassword(page, name, initial);
   await page.waitForURL('**/admin/totp');
-  actor.secret = await page.locator('.code').first().textContent();
+  actor.secret = (await page.locator('.totp-secret').textContent()).replace(/\s/g, '');
   check(`${name} 第一次登入顯示 TOTP 密鑰`, /^[A-Z2-7]{32}$/.test(actor.secret), actor.secret);
   await page.fill('#code', await totp(actor));
   await page.click('main button[type=submit]');
@@ -134,12 +135,21 @@ async function buy(player, packageName, scenario) {
   await page.click('text=前往充值網站');
   await page.waitForURL(`${BASE}/shop`);
   check('單次 token 沒有出現在網址', !page.url().includes('token'));
-  await page.locator('.package', { hasText: packageName }).locator('button').click();
+  await page.locator('.package-card', { hasText: packageName }).click();
+  await page.click('#topup-submit');
   await page.waitForURL('**/mock-pay/**');
   const orderNo = await page.locator('dl.facts .code').textContent();
-  if (scenario) {
+  // 信用卡的結果由測試卡號決定；竄改通知的情境走「進階測試」表單。
+  const TEST_CARDS = { success: '4111111111111111', failed: '4000000000000002', delayed: '4000000000000036', duplicate: '4000000000000044' };
+  if (scenario && TEST_CARDS[scenario]) {
+    await page.click(`[data-fill-card="${TEST_CARDS[scenario]}"]`);
+    check(`${scenario} 測試卡填入後格式檢查通過`, (await page.locator('#card-form [aria-invalid=true]').count()) === 0);
+    await page.click('#card-form button[type=submit]');
+    await page.waitForURL('**/shop/orders/**');
+  } else if (scenario) {
+    await page.click('details.advanced summary');
     await page.selectOption('#scenario', scenario);
-    await page.click('main button[type=submit]');
+    await page.click('details.advanced button[type=submit]');
     await page.waitForURL('**/shop/orders/**');
   }
   return orderNo;
@@ -160,12 +170,26 @@ async function waitForText(actor, url, text, timeout = 45000) {
   }
 }
 
-async function submitRefund(player, points) {
+// 退款要先綁定撥款帳戶（需要再輸入一次密碼）；已經綁過就不重複綁。
+async function ensureBankAccount(player) {
   const { page } = player;
   await page.goto(`${BASE}/game/refunds`);
-  await page.fill('#points', String(points));
+  if ((await page.locator('input[name=bank_account_id]').count()) > 0) return;
+  await page.fill('#label', '測試帳戶');
   await page.fill('#bank_code', '812');
   await page.fill('#bank_account', '1234567890123');
+  await page.fill('#holder_name', '王小明');
+  await page.fill('#account_password', PASSWORD);
+  await page.click('details.add-account button[type=submit]');
+  await page.waitForSelector('.flash.ok');
+  check(`${player.name} 綁定撥款帳戶`, (await page.textContent('.flash.ok')).includes('812-****0123'));
+}
+
+async function submitRefund(player, points) {
+  const { page } = player;
+  await ensureBankAccount(player);
+  await page.goto(`${BASE}/game/refunds`);
+  await page.fill('#points', String(points));
   await page.click('main form[data-dialog] button[type=submit]');
   await page.waitForSelector('#refund-dialog[open]');
   await page.click('[data-dialog-ok]');
@@ -222,7 +246,9 @@ async function setNextPayout(supervisor, result) {
   await register(A, 'alice_e2e', '愛麗絲');
   await register(B, 'bob_e2e', '小明');
   await buy(A, '500 元方案', 'success');
-  check('訂單顯示已完成', await waitForText(A, A.page.url(), '已完成'));
+  // 訂單頁每 1 秒更新，入帳完成後自動回到玩家中心。
+  await A.page.waitForURL(`${BASE}/game`, { timeout: 45000 });
+  check('入帳後回到玩家中心並顯示訊息', (await A.page.textContent('.flash.ok')).includes('充值完成，已入帳 50,000 點'));
   await shot(A, '01-order-fulfilled');
   await expectBalances(A, { balance: 50000, frozen: 0 }, '付款 500 元取得 50,000 點');
   await A.page.goto(`${BASE}/game/ledger`);
@@ -278,10 +304,9 @@ async function setNextPayout(supervisor, result) {
   await expectBalances(A, { balance: 155000, frozen: 0 }, '未領紅包到期退回');
 
   // 步驟 3：退款申請、提示視窗、凍結。
+  await ensureBankAccount(A);
   await A.page.goto(`${BASE}/game/refunds`);
   await A.page.fill('#points', '80000');
-  await A.page.fill('#bank_code', '812');
-  await A.page.fill('#bank_account', '1234567890123');
   await A.page.click('main form[data-dialog] button[type=submit]');
   await A.page.waitForSelector('#refund-dialog[open]');
   const dialogText = await A.page.locator('#refund-dialog').textContent();

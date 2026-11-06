@@ -9,6 +9,13 @@ interface PaymentGateway
 {
     public function name(): string;
 
+    /**
+     * 帳戶驗證：確認帳號存在、戶名相符。
+     *
+     * @return string matched、account_not_found 或 name_mismatch
+     */
+    public function verifyAccount(string $bankCode, string $account, string $holderName): string;
+
     /** 回傳付款頁網址。 */
     public function createCheckout(Order $order): string;
 

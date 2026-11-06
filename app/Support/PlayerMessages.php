@@ -9,5 +9,8 @@ class PlayerMessages
 
     public const TOPUP_FAILED = '充值失敗，請聯繫客服';
 
+    /** 發卡行拒絕是玩家自己能處理的原因（換卡或改用其他付款方式），所以照實說明。 */
+    public const CARD_DECLINED = '發卡行拒絕交易';
+
     public const ROUND_HELD = '此局暫停處理，請聯繫管理人員';
 }

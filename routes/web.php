@@ -13,8 +13,10 @@ use App\Http\Controllers\Admin\MiniGameController;
 use App\Http\Controllers\Admin\PackageController;
 use App\Http\Controllers\Admin\PlayerController;
 use App\Http\Controllers\Admin\RefundController as AdminRefundController;
+use App\Http\Controllers\Admin\SupportController as AdminSupportController;
 use App\Http\Controllers\MockPayController;
 use App\Http\Controllers\ShopController;
+use App\Http\Controllers\SupportController;
 use App\MiniGame\Http\WheelController;
 use Illuminate\Support\Facades\Route;
 
@@ -37,6 +39,8 @@ Route::prefix('game')->name('game.')->group(function () {
         Route::get('ledger', [GameController::class, 'ledger'])->name('ledger');
         Route::get('orders', [GameController::class, 'orders'])->name('orders');
         Route::post('go-shop', [GameController::class, 'goShop'])->name('go-shop');
+        // 客服在充值網站；這裡發單次 token 後自動轉過去。
+        Route::get('support', [GameController::class, 'goSupport'])->name('support');
 
         Route::get('red-packets', [RedPacketController::class, 'index'])->name('red-packets');
         Route::post('red-packets/confirm', [RedPacketController::class, 'confirm'])->name('red-packets.confirm');
@@ -45,6 +49,8 @@ Route::prefix('game')->name('game.')->group(function () {
 
         Route::get('refunds', [GameRefundController::class, 'index'])->name('refunds');
         Route::post('refunds', [GameRefundController::class, 'submit'])->name('refunds.submit');
+        Route::post('refunds/accounts', [GameRefundController::class, 'addAccount'])->middleware('throttle:10,10,bank-account')->name('refunds.accounts.store');
+        Route::post('refunds/accounts/{account}/delete', [GameRefundController::class, 'deleteAccount'])->whereNumber('account')->name('refunds.accounts.destroy');
 
         Route::get('wheel', [WheelController::class, 'index'])->name('wheel');
         Route::get('wheel/rounds', [WheelController::class, 'rounds'])->name('wheel.rounds');
@@ -63,12 +69,17 @@ Route::prefix('shop')->name('shop.')->middleware('shop.player')->group(function 
     Route::post('orders', [ShopController::class, 'createOrder'])->name('orders.create');
     Route::get('orders/{orderNo}', [ShopController::class, 'showOrder'])->name('orders.show');
     Route::get('back-to-game', [ShopController::class, 'backToGame'])->name('back-to-game');
+
+    Route::get('support', [SupportController::class, 'index'])->name('support.index');
+    Route::post('support', [SupportController::class, 'store'])->middleware('throttle:5,10,support-create')->name('support.store');
+    Route::get('support/{ticket}', [SupportController::class, 'show'])->name('support.show');
+    Route::post('support/{ticket}/reply', [SupportController::class, 'reply'])->middleware('throttle:20,10,support-reply')->name('support.reply');
 });
 
 // 模擬金流付款頁
 Route::middleware('shop.player')->group(function () {
     Route::get('mock-pay/{orderNo}', [MockPayController::class, 'show'])->name('mock.pay.show');
-    Route::post('mock-pay/{orderNo}', [MockPayController::class, 'pay'])->name('mock.pay.submit');
+    Route::post('mock-pay/{orderNo}', [MockPayController::class, 'pay'])->middleware('throttle:20,1,mock-pay')->name('mock.pay.submit');
 });
 
 // 管理後台
@@ -98,6 +109,10 @@ Route::prefix('admin')->name('admin.')->middleware('admin.ip')->group(function (
         Route::get('anomalies', [AnomalyController::class, 'index'])->name('anomalies');
         Route::get('audit', AuditController::class)->name('audit');
         Route::get('minigame', [MiniGameController::class, 'index'])->name('minigame');
+        Route::get('support', [AdminSupportController::class, 'index'])->name('support');
+        Route::get('support/{ticket}', [AdminSupportController::class, 'show'])->name('support.show');
+        Route::post('support/{ticket}/reply', [AdminSupportController::class, 'reply'])->name('support.reply');
+        Route::post('support/{ticket}/close', [AdminSupportController::class, 'close'])->name('support.close');
 
         Route::middleware('admin.role:reviewer')->group(function () {
             Route::post('refunds/{refund}/review-approve', [AdminRefundController::class, 'reviewApprove'])->name('refunds.review-approve');

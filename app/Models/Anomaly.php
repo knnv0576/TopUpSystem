@@ -12,6 +12,7 @@ class Anomaly extends Model
         'grant_failed' => '入點失敗',
         'grant_held_suspended' => '玩家停權，暫不入點',
         'payout_failed' => '撥款失敗',
+        'payout_returned' => '撥款退匯',
         'freeze_failed' => '凍結點數失敗',
         'unfreeze_failed' => '解凍點數失敗',
         'suspension_sync_failed' => '停權同步失敗',

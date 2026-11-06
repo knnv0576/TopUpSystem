@@ -37,6 +37,7 @@ class PaymentWebhookService
                 'payment.failed' => $this->paymentFailed($event),
                 'payout.succeeded' => $this->refunds->payoutSucceeded($event),
                 'payout.failed' => $this->refunds->payoutFailed($event),
+                'payout.returned' => $this->refunds->payoutReturned($event),
                 default => null,
             };
         });
@@ -105,7 +106,9 @@ class PaymentWebhookService
             return;
         }
 
-        $order->update(['status' => 'failed']);
-        AuditLog::record('payment.failed', $order, ['from' => 'pending', 'to' => 'failed', 'amount' => $order->amount]);
+        // 只接受已知的原因代碼，其他一律不記。
+        $code = in_array($event['failure_code'] ?? null, Order::FAILURE_CODES, true) ? $event['failure_code'] : null;
+        $order->update(['status' => 'failed', 'failure_code' => $code]);
+        AuditLog::record('payment.failed', $order, ['from' => 'pending', 'to' => 'failed', 'amount' => $order->amount, 'note' => $code === 'card_declined' ? '發卡行拒絕交易' : null]);
     }
 }

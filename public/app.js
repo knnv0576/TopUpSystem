@@ -31,4 +31,20 @@ document.addEventListener('DOMContentLoaded', function () {
       if (!window.confirm(form.dataset.confirm)) event.preventDefault();
     });
   });
+
+  // 玩家中心的點數數字從 0 跑到實際值（只是畫面效果；系統設定減少動態效果時直接顯示）。
+  if (document.body.classList.contains('theme-game') && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    // 有 id 的數字會由頁面腳本即時更新（例如轉盤的可用點數），不套用。
+    document.querySelectorAll('.stat .value:not([id])').forEach(function (el) {
+      var target = Number(el.textContent.replace(/[^\d-]/g, ''));
+      if (!isFinite(target) || target === 0) return;
+      var start = performance.now(), duration = 700, final = el.textContent;
+      function step(now) {
+        var t = Math.min(1, (now - start) / duration), eased = 1 - Math.pow(1 - t, 3);
+        el.textContent = t < 1 ? Math.round(target * eased).toLocaleString('en-US') : final;
+        if (t < 1) requestAnimationFrame(step);
+      }
+      requestAnimationFrame(step);
+    });
+  }
 });
