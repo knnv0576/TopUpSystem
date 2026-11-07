@@ -37,7 +37,11 @@ class ReconciliationTest extends TestCase
         $orderNo = $this->actingAs($alice, 'game')->postJson(route('game.wheel.topups'), [
             'package_id' => $package->id,
             'request_id' => (string) Str::uuid(),
+            'method' => 'card',
         ])->assertCreated()->json('order_no');
+        $this->actingAs($alice, 'game')->postJson(route('game.wheel.topups.pay', $orderNo), [
+            'card_name' => 'TEST USER', 'card_number' => '4111111111111111', 'card_expiry' => now()->addYear()->format('m/y'), 'card_cvv' => '123',
+        ])->assertOk();
         $this->assertSame('fulfilled', Order::where('order_no', $orderNo)->sole()->status);
 
         $this->spin($alice, 1000, 1000)->assertOk()->assertJson(['state' => 'settled', 'payout' => 10000]);

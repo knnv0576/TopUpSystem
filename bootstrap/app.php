@@ -5,6 +5,7 @@ use App\Http\Middleware\EnsureAdmin;
 use App\Http\Middleware\EnsureAdminRole;
 use App\Http\Middleware\EnsureGamePlayer;
 use App\Http\Middleware\EnsureShopPlayer;
+use App\Http\Middleware\UseAdminSession;
 use App\Http\Middleware\VerifyApiSignature;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -27,6 +28,8 @@ return Application::configure(basePath: dirname(__DIR__))
             'game.player' => EnsureGamePlayer::class,
             'shop.player' => EnsureShopPlayer::class,
         ]);
+        // 後台改用獨立的 session cookie；要在啟動 session 之前切換。
+        $middleware->web(prepend: [UseAdminSession::class]);
         // 單次 token 本身已簽章且只能用一次；這裡是唯一免 CSRF 的網頁端點。
         $middleware->validateCsrfTokens(except: ['shop/sso']);
     })

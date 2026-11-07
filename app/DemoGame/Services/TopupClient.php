@@ -51,14 +51,20 @@ class TopupClient
         return $this->send('/api/topup/packages', [])->throw()->json('data') ?? [];
     }
 
-    public function createGameOrder(int $playerId, string $requestId, int $packageId): Response
+    public function createGameOrder(int $playerId, string $requestId, int $packageId, string $method): Response
     {
-        return $this->send("/api/topup/players/$playerId/game-orders", ['request_id' => $requestId, 'package_id' => $packageId]);
+        return $this->send("/api/topup/players/$playerId/game-orders", ['request_id' => $requestId, 'package_id' => $packageId, 'method' => $method]);
     }
 
     public function gameOrder(int $playerId, string $orderNo): Response
     {
-        return $this->send("/api/topup/players/$playerId/game-orders/$orderNo", []);
+        return $this->send("/api/topup/players/$playerId/game-orders/".rawurlencode($orderNo), []);
+    }
+
+    /** 付款資料只轉送給充值端，這裡不保存也不記錄。 */
+    public function payGameOrder(int $playerId, string $orderNo, array $payment): Response
+    {
+        return $this->send("/api/topup/players/$playerId/game-orders/".rawurlencode($orderNo).'/pay', $payment);
     }
 
     private function send(string $path, array $data): Response

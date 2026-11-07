@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\DemoGame\Services\RedPacketService;
 use App\Models\Anomaly;
+use App\Models\AuditLog;
 use App\Models\Player;
 use App\Models\PointAdjustment;
 use App\Models\PointGrant;
@@ -420,12 +421,27 @@ class AdjustmentAndSuspensionTest extends TestCase
     {
         $this->actingAs($this->admin('reviewer'), 'admin')->post(route('admin.packages.store'), ['name' => 'x', 'price' => 10])->assertForbidden();
 
-        $this->actingAs($this->admin('supervisor'), 'admin')->post(route('admin.packages.store'), ['name' => '新方案', 'price' => 200])->assertRedirect();
+        $supervisor = $this->admin('supervisor');
+
+        // 價格影響玩家付的錢，新增與修改都要 TOTP。
+        $this->actingAs($supervisor, 'admin')->post(route('admin.packages.store'), ['name' => '新方案', 'price' => 200, 'code' => '000000'])->assertSessionHasErrors('code');
+        $this->assertFalse(\App\Models\Package::where('name', '新方案')->exists());
+
+        $this->actingAs($supervisor, 'admin')->post(route('admin.packages.store'), ['name' => '新方案', 'price' => 200, 'code' => $this->totp($supervisor)])->assertRedirect();
         $package = \App\Models\Package::where('name', '新方案')->firstOrFail();
         $this->assertSame(20000, $package->points());
 
-        $this->post(route('admin.packages.update', $package), ['name' => '新方案', 'price' => 200]);
+        $this->post(route('admin.packages.update', $package), ['name' => '新方案', 'price' => 1, 'code' => '000000'])->assertSessionHasErrors('code');
+        $this->assertSame(200, $package->fresh()->price);
+
+        $this->post(route('admin.packages.update', $package), ['name' => '改名方案', 'price' => 300, 'code' => $this->totp($supervisor)]);
         $this->assertFalse($package->fresh()->active);
+
+        // 稽核紀錄保留修改前後的值。
+        $log = AuditLog::where('action', 'package.updated')->sole();
+        $this->assertSame(['active', 'inactive', 300], [$log->from_status, $log->to_status, (int) $log->amount]);
+        $this->assertSame('名稱：新方案 → 改名方案；價格：200 → 300 元；狀態：上架 → 下架', $log->note);
+        $this->assertSame('supervisor', $log->actor);
 
         $shop = Player::forGame($this->player()->id);
         $this->actingAs($shop, 'shop')->get(route('shop.index'))->assertDontSee('新方案');

@@ -23,7 +23,7 @@ class DemoController
             'payoutResults' => MockGateway::PAYOUT_RESULTS,
             'nextPayout' => Cache::get(MockGateway::NEXT_PAYOUT_CACHE_KEY, 'success'),
             'gameTopupResults' => MockGateway::GAME_TOPUP_RESULTS,
-            'nextGameTopup' => Cache::get(MockGateway::NEXT_GAME_TOPUP_CACHE_KEY, 'success'),
+            'nextGameTopup' => Cache::get(MockGateway::NEXT_GAME_TOPUP_CACHE_KEY),
         ]);
     }
 

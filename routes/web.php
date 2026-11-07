@@ -57,6 +57,8 @@ Route::prefix('game')->name('game.')->group(function () {
         // 第三個參數是計數器前綴：沒有它的話，同一位玩家的這些路由會共用計數，查詢狀態也會吃掉轉盤的額度。
         Route::post('wheel/topups', [WheelController::class, 'createTopup'])->middleware('throttle:20,1,wheel-topup')->name('wheel.topups');
         Route::get('wheel/topups/{orderNo}', [WheelController::class, 'showTopup'])->middleware('throttle:120,1,wheel-topup-status')->name('wheel.topups.show');
+        // 與模擬付款頁相同：送出付款每分鐘最多 20 次。
+        Route::post('wheel/topups/{orderNo}/pay', [WheelController::class, 'payTopup'])->middleware('throttle:20,1,wheel-topup-pay')->name('wheel.topups.pay');
         Route::post('wheel/{publicId}/spin', [WheelController::class, 'spin'])->whereUuid('publicId')->middleware('throttle:30,1,wheel-spin')->name('wheel.spin');
         Route::get('wheel/{publicId}', [WheelController::class, 'show'])->whereUuid('publicId')->middleware('throttle:120,1,wheel-status')->name('wheel.show');
     });
@@ -135,8 +137,8 @@ Route::prefix('admin')->name('admin.')->middleware('admin.ip')->group(function (
             Route::post('accounts/{account}/disable', [AccountController::class, 'disable'])->middleware('throttle:sensitive')->name('accounts.disable');
             Route::post('accounts/{account}/enable', [AccountController::class, 'enable'])->middleware('throttle:sensitive')->name('accounts.enable');
 
-            Route::post('packages', [PackageController::class, 'store'])->name('packages.store');
-            Route::post('packages/{package}', [PackageController::class, 'update'])->name('packages.update');
+            Route::post('packages', [PackageController::class, 'store'])->middleware('throttle:sensitive')->name('packages.store');
+            Route::post('packages/{package}', [PackageController::class, 'update'])->middleware('throttle:sensitive')->name('packages.update');
 
             Route::post('minigame/toggle', [MiniGameController::class, 'toggle'])->middleware('throttle:sensitive')->name('minigame.toggle');
 

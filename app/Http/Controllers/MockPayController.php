@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Order;
 use App\Payments\MockCheckout;
 use App\Payments\MockGateway;
+use App\Support\PlayerMessages;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -46,69 +47,44 @@ class MockPayController
             throw ValidationException::withMessages(['method' => '請選擇付款方式']);
         }
         if (! $this->payable($order)) {
-            throw ValidationException::withMessages(['method' => '這筆訂單已不是待付款狀態，無法付款']);
+            throw ValidationException::withMessages(['method' => $this->notPayableReason($order)]);
+        }
+        // 選方案時已決定付款方式；進階測試不是付款方式，不受限制。
+        if ($order->payment_method !== null && $method !== 'advanced' && $method !== $order->payment_method) {
+            throw ValidationException::withMessages(['method' => '這筆訂單的付款方式是'.Order::PAYMENT_METHODS[$order->payment_method].'，不能改用其他方式']);
         }
 
-        $scenario = match ($method) {
-            'card' => $this->card($request),
-            'atm' => $this->atm($request, $order),
-            'cvs' => $this->cvs($request, $order),
-            'advanced' => $this->advanced($request),
-        };
+        if ($method === 'advanced') {
+            $scenario = $this->advanced($request);
+        } else {
+            [$errors, $scenario] = MockCheckout::validatePayment($order, $method, $request->only(MockCheckout::PAYMENT_FIELDS), now());
+            if ($errors !== []) {
+                throw ValidationException::withMessages($errors);
+            }
+            // 一張訂單只送出一次付款；進階測試只送異常通知，不算付款。
+            if (! $order->claimPayment()) {
+                throw ValidationException::withMessages(['method' => $this->notPayableReason($order->fresh())]);
+            }
+        }
 
         $gateway->simulatePayment($order, $scenario);
+
+        // 異常通知不會入點，不用到訂單頁等待結果。
+        if ($method === 'advanced') {
+            return redirect()->route('mock.pay.show', $order->order_no)->with('status', match ($scenario) {
+                'bad_signature' => '已送出簽章錯誤的通知。系統會拒絕這筆通知，訂單仍是待付款，可以繼續付款或再測一次。',
+                'amount_mismatch' => '已送出金額不符的通知。系統不會入點，這筆訂單會改為「充值失敗，請聯繫客服」並列入後台異常清單，不能再付款。',
+            });
+        }
+
         $request->session()->put(ShopController::RETURN_AFTER_ORDER, $order->order_no);
+        // 訂單頁只在這段時間內自動更新，等待金流通知（含延遲通知）。
+        $request->session()->put(ShopController::AWAITING_NOTICE, [
+            'order' => $order->order_no,
+            'until' => now()->addSeconds(config('topup.mock_delay_seconds') + 30)->getTimestamp(),
+        ]);
 
         return redirect()->route('shop.orders.show', $order->order_no);
-    }
-
-    private function card(Request $request): string
-    {
-        [$errors, $scenario] = MockCheckout::validateCard($request->only(['card_name', 'card_number', 'card_expiry', 'card_cvv']), now());
-
-        return $errors === [] ? $scenario : throw ValidationException::withMessages($errors);
-    }
-
-    private function atm(Request $request, Order $order): string
-    {
-        $errors = [];
-        $bank = trim((string) $request->input('atm_bank'));
-        $account = MockCheckout::digits((string) $request->input('atm_account'));
-        $amount = trim((string) $request->input('atm_amount'));
-
-        if (! preg_match('/^\d{3}$/', $bank)) {
-            $errors['atm_bank'] = '轉入銀行代碼必須是 3 位數字';
-        } elseif ($bank !== MockCheckout::ATM_BANK_CODE) {
-            $errors['atm_bank'] = '轉入銀行代碼不正確';
-        }
-        if (! preg_match('/^\d{14}$/', $account)) {
-            $errors['atm_account'] = '轉入帳號必須是 14 位數字';
-        } elseif ($account !== MockCheckout::virtualAccount($order)) {
-            $errors['atm_account'] = '轉入帳號與這筆訂單的虛擬帳號不符';
-        }
-        $errors += $this->amountError('atm_amount', $amount, $order, '轉帳金額');
-
-        return $errors === [] ? 'success' : throw ValidationException::withMessages($errors);
-    }
-
-    private function cvs(Request $request, Order $order): string
-    {
-        if (! MockCheckout::cvsAvailable($order)) {
-            throw ValidationException::withMessages(['method' => '超商代碼單筆上限 '.number_format(MockCheckout::CVS_LIMIT).' 元，請改用其他付款方式']);
-        }
-
-        $errors = [];
-        $code = strtoupper(MockCheckout::digits((string) $request->input('cvs_code')));
-        $amount = trim((string) $request->input('cvs_amount'));
-
-        if (! preg_match('/^[A-Z0-9]{14}$/', $code)) {
-            $errors['cvs_code'] = '繳費代碼必須是 14 個英文字母或數字';
-        } elseif ($code !== MockCheckout::storeCode($order)) {
-            $errors['cvs_code'] = '繳費代碼與這筆訂單不符';
-        }
-        $errors += $this->amountError('cvs_amount', $amount, $order, '繳費金額');
-
-        return $errors === [] ? 'success' : throw ValidationException::withMessages($errors);
     }
 
     private function advanced(Request $request): string
@@ -120,26 +96,23 @@ class MockPayController
             : throw ValidationException::withMessages(['scenario' => '請選擇異常情境']);
     }
 
-    /** @return array<string, string> */
-    private function amountError(string $field, string $amount, Order $order, string $label): array
-    {
-        if (! preg_match('/^\d{1,9}$/', $amount)) {
-            return [$field => "{$label}必須是整數"];
-        }
-        if ((int) $amount !== $order->amount) {
-            return [$field => "{$label}必須等於應繳金額 ".number_format($order->amount).' 元'];
-        }
-
-        return [];
-    }
-
     private function payable(Order $order): bool
     {
-        return $order->status === 'pending' && $order->expires_at->isFuture();
+        return $order->isPayable();
     }
 
+    private function notPayableReason(Order $order): string
+    {
+        return match (true) {
+            $order->failedForPlayer() => PlayerMessages::TOPUP_FAILED.'，這筆訂單不能再付款',
+            $order->status === 'pending' && $order->payment_submitted_at !== null => '這筆訂單已經送出付款，請等待結果',
+            default => '這筆訂單已不是待付款狀態，無法付款',
+        };
+    }
+
+    /** 只處理充值網站的訂單；遊戲內充值在轉盤頁的彈窗付款。 */
     private function ownOrder(string $orderNo): Order
     {
-        return Order::where('order_no', $orderNo)->where('player_id', Auth::guard('shop')->id())->firstOrFail();
+        return Order::where('order_no', $orderNo)->where('player_id', Auth::guard('shop')->id())->where('source', 'shop')->firstOrFail();
     }
 }

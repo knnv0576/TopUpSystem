@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Http\Middleware\EnsureAdmin;
 use App\Models\AdminUser;
 use App\Models\AuditLog;
 use App\Services\TotpService;
@@ -105,6 +106,7 @@ class AuthController
         Auth::guard('admin')->login($admin);
         $request->session()->regenerate();
         $request->session()->put($admin->fingerprintSessionKey(), $admin->sessionFingerprint());
+        $request->session()->put(EnsureAdmin::AUTHENTICATED_AT, now()->getTimestamp());
         AuditLog::record('admin.login', $admin, [], $admin);
 
         return redirect()->route('admin.home');

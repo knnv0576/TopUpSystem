@@ -7,6 +7,7 @@ use App\Models\AuditLog;
 use App\Models\Order;
 use App\Models\Package;
 use App\Models\Player;
+use App\Payments\MockCheckout;
 use App\Payments\PaymentGateway;
 use App\Services\OrderService;
 use App\Support\PlayerMessages;
@@ -70,35 +71,48 @@ class ShopController
         if (! $package) {
             return back()->withErrors(['package_id' => '找不到這個方案']);
         }
+        $method = $data['method'] ?? 'card';
+        if ($reason = MockCheckout::methodUnavailableReason($method, $package->price)) {
+            return back()->withInput()->withErrors(['method' => $reason]);
+        }
 
         try {
-            $order = $orders->create(Auth::guard('shop')->user(), $package);
+            $order = $orders->create(Auth::guard('shop')->user(), $package, ['payment_method' => $method]);
         } catch (RuntimeException $e) {
             return back()->withErrors(['package_id' => $e->getMessage()]);
         }
 
-        // 付款方式只是付款頁預設打開的分頁，不影響訂單內容。
-        $checkout = $gateway->createCheckout($order);
-
-        return redirect()->away(isset($data['method']) ? $checkout.'?method='.$data['method'] : $checkout);
+        // 付款方式記在訂單上，付款頁只顯示這一種；不影響訂單金額。
+        return redirect()->away($gateway->createCheckout($order));
     }
 
     /** 只顯示狀態，不作為付款依據。 */
     /** 剛付款的訂單完成後直接回玩家中心；之後再開訂單頁則照常顯示。 */
     public const RETURN_AFTER_ORDER = 'shop.return_after_order';
 
+    /** 剛送出付款、正在等金流通知的訂單與等待期限。 */
+    public const AWAITING_NOTICE = 'shop.awaiting_notice';
+
     public function showOrder(Request $request, string $orderNo): View|RedirectResponse
     {
         $order = $this->ownOrder($orderNo);
 
         if ($order->status === 'fulfilled' && $request->session()->get(self::RETURN_AFTER_ORDER) === $order->order_no) {
-            $request->session()->forget(self::RETURN_AFTER_ORDER);
+            $request->session()->forget([self::RETURN_AFTER_ORDER, self::AWAITING_NOTICE]);
 
             return redirect()->route('game.dashboard')
                 ->with('status', '充值完成，已入帳 '.number_format($order->points)." 點（訂單 {$order->order_no}）");
         }
 
-        return view('shop.order', ['order' => $order]);
+        // 待付款的訂單只在剛送出付款後等待通知；已付款（入點中）一定會有結果，持續更新。
+        // 玩家看到失敗（例如金額不符）的訂單要由客服處理，不再等待也不能再付款。
+        // 遊戲內充值在轉盤頁付款，這裡不提供付款頁連結。
+        $payable = $order->source === 'shop' && $order->isPayable();
+        $awaiting = $request->session()->get(self::AWAITING_NOTICE);
+        $waiting = $order->status === 'pending' && ! $order->failedForPlayer() && ($awaiting['order'] ?? null) === $order->order_no;
+        $refresh = ($order->status === 'paid' && ! $order->failedForPlayer()) || ($waiting && now()->getTimestamp() < $awaiting['until']);
+
+        return view('shop.order', ['order' => $order, 'payable' => $payable, 'refresh' => $refresh, 'noticeOverdue' => $waiting && ! $refresh]);
     }
 
     public function backToGame(): RedirectResponse

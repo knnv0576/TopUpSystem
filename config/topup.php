@@ -27,5 +27,10 @@ return [
     'lockout_attempts' => 5,
     'lockout_minutes' => 15,
 
+    // 後台 session 與玩家端分開；特權帳號閒置 15 分鐘要重新登入（參考 PCI DSS 8.2.8），
+    // 不論有沒有操作，登入超過 8 小時也要重新登入。
+    'admin_idle_minutes' => (int) env('ADMIN_IDLE_MINUTES', 15),
+    'admin_absolute_hours' => (int) env('ADMIN_ABSOLUTE_HOURS', 8),
+
     'admin_ip_allowlist' => array_values(array_filter(array_map('trim', explode(',', (string) env('ADMIN_IP_ALLOWLIST', '127.0.0.1,::1'))))),
 ];

@@ -19,7 +19,7 @@
     </div>
     <div class="card">
         <h2>下一次遊戲內充值的結果</h2>
-        <p class="muted">目前設定：{{ $gameTopupResults[$nextGameTopup] ?? $nextGameTopup }}。用過一次後回到付款成功。</p>
+        <p class="muted">目前設定：{{ $nextGameTopup ? ($gameTopupResults[$nextGameTopup] ?? $nextGameTopup) : '未設定（依玩家輸入的付款資料決定）' }}。設定後會蓋過下一次送出付款的結果，用過一次就回到依付款資料決定。</p>
         <form method="post" action="{{ route('admin.demo.next-game-topup') }}">
             @csrf
             <label for="game_topup_result">結果</label>

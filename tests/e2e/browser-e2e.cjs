@@ -1,6 +1,6 @@
 // 以真實 Chrome 走完端對端流程。需要 playwright-core 與本機 Chrome。
 // 用法：NODE_PATH=<含 playwright-core 的 node_modules> node tests/e2e/browser-e2e.cjs <screenshot 目錄>
-// 執行前先重建資料：docker compose exec app php artisan migrate:fresh --seed --force
+// 執行前先重建資料：docker compose exec app php artisan migrate:fresh --seed --force --database=pgsql_owner
 // 腳本會用 topup:admin-reset 取得管理員的臨時密碼，所以不需要傳入密碼。
 const { chromium } = require('playwright-core');
 const { execFileSync } = require('node:child_process');
@@ -149,8 +149,9 @@ async function buy(player, packageName, scenario) {
   } else if (scenario) {
     await page.click('details.advanced summary');
     await page.selectOption('#scenario', scenario);
-    await page.click('details.advanced button[type=submit]');
-    await page.waitForURL('**/shop/orders/**');
+    // 竄改通知會被拒絕，回付款頁顯示提示，不到訂單頁等待。
+    await Promise.all([page.waitForNavigation(), page.click('details.advanced button[type=submit]')]);
+    check(`${scenario} 送出後回到付款頁並顯示提示`, page.url().includes('/mock-pay/') && (await page.locator('.flash.ok').count()) === 1, page.url());
   }
   return orderNo;
 }
@@ -239,6 +240,7 @@ async function setNextPayout(supervisor, result) {
   await supervisor.page.goto(`${BASE}/admin/packages`);
   await supervisor.page.fill('#name', '500 元方案');
   await supervisor.page.fill('#price', '500');
+  await supervisor.page.fill('#code', await totp(supervisor));
   await supervisor.page.click('main .card:last-child button[type=submit]');
   await supervisor.page.waitForSelector('.flash.ok');
 
@@ -497,6 +499,7 @@ async function setNextPayout(supervisor, result) {
   const packageRow = supervisor.page.locator('tbody tr', { hasText: '500 元方案' });
   await packageRow.locator('input[name=price]').fill('600');
   await packageRow.locator('input[name=active]').uncheck();
+  await packageRow.locator('input[name=code]').fill(await totp(supervisor));
   await packageRow.locator('button:has-text("儲存")').click();
   await supervisor.page.waitForSelector('.flash.ok');
   await A.page.goto(`${BASE}/game`);
@@ -629,9 +632,18 @@ async function setNextPayout(supervisor, result) {
   const C = await newActor(browser, 'C');
   await register(C, 'carol_e2e', '卡蘿');
   const wheelPoints = async () => num(await C.page.textContent('#wheel-available'));
+  // 遊戲內充值：彈窗選信用卡 → 建立訂單 → 填入成功的測試卡 → 送出 → 等結果。
   const topup = async (text) => {
     await C.page.click('[data-topup] >> nth=0');
+    await C.page.waitForSelector('#topup-dialog[open]');
+    await C.page.click('#topup-dialog .method-card:has(input[value=card])');
+    await C.page.click('#topup-create');
+    await C.page.waitForSelector('[data-topup-step=pay]:not([hidden])');
+    await C.page.click('#topup-dialog [data-fill-card="4111111111111111"]');
+    await C.page.click('#topup-dialog [data-pay-panel=card] button[type=submit]');
     await C.page.waitForFunction((t) => document.getElementById('topup-message').textContent.includes(t), text, { timeout: 40000 });
+    check('付款後卡號與安全碼已清空', (await C.page.inputValue('#card_number')) === '' && (await C.page.inputValue('#card_cvv')) === '');
+    await C.page.click('[data-topup-step=result] [data-topup-close]');
   };
 
   await C.page.goto(`${BASE}/game/wheel`);

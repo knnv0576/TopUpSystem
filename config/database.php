@@ -99,6 +99,22 @@ return [
             'sslmode' => env('DB_SSLMODE', 'prefer'),
         ],
 
+        // 資料表擁有者：只給 migration 使用（--database=pgsql_owner）。
+        // 應用程式平常用上面的 pgsql 連線，帳號只有讀寫權限，改不了結構與觸發器。
+        'pgsql_owner' => [
+            'driver' => 'pgsql',
+            'host' => env('DB_HOST', '127.0.0.1'),
+            'port' => env('DB_PORT', '5432'),
+            'database' => env('DB_DATABASE', 'laravel'),
+            'username' => env('DB_OWNER_USERNAME'),
+            'password' => env('DB_OWNER_PASSWORD', ''),
+            'charset' => env('DB_CHARSET', 'utf8'),
+            'prefix' => '',
+            'prefix_indexes' => true,
+            'search_path' => 'public',
+            'sslmode' => env('DB_SSLMODE', 'prefer'),
+        ],
+
         'sqlsrv' => [
             'driver' => 'sqlsrv',
             'url' => env('DB_URL'),

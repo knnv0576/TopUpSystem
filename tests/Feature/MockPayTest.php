@@ -7,6 +7,7 @@ use App\Models\Order;
 use App\Models\Player;
 use App\Payments\MockCheckout;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
 
 class MockPayTest extends TestCase
@@ -200,15 +201,115 @@ class MockPayTest extends TestCase
 
         $response = $this->actingAs($player, 'shop')->post(route('shop.orders.create'), ['package_id' => $package->id, 'method' => 'atm']);
         $order = Order::sole();
-        $response->assertRedirect(route('mock.pay.show', $order->order_no).'?method=atm');
-        $this->actingAs($player, 'shop')->get(route('mock.pay.show', [$order->order_no, 'method' => 'atm']))
-            ->assertSee('id="tab-atm" checked', false);
-        // 付款方式只決定預設分頁，不會改變訂單金額。
-        $this->assertSame([300, 30000], [$order->amount, $order->points]);
+        $response->assertRedirect(route('mock.pay.show', $order->order_no));
+        // 付款頁只顯示選好的付款方式，沒有分頁；網址參數也改不了。
+        $this->actingAs($player, 'shop')->get(route('mock.pay.show', [$order->order_no, 'method' => 'card']))
+            ->assertSee('id="tab-atm" checked', false)->assertSee('模擬 ATM 轉帳')
+            ->assertDontSee('role="tablist"', false)->assertDontSee('id="card-form"', false)->assertDontSee('模擬超商櫃檯繳費')
+            ->assertSee('進階測試');
+        // 付款方式不會改變訂單金額。
+        $this->assertSame(['atm', 300, 30000], [$order->payment_method, $order->amount, $order->points]);
+
+        // 伺服器也只接受訂單的付款方式；進階測試不受限制。
+        $this->pay($order, $this->card())->assertSessionHasErrors(['method' => '這筆訂單的付款方式是ATM 虛擬帳號，不能改用其他方式']);
+        $this->assertNotPaid($order);
+        $this->pay($order, ['method' => 'advanced', 'scenario' => 'bad_signature'])->assertSessionHasNoErrors();
+
+        // 超過超商代碼上限的方案不能選超商代碼。
+        $large = $this->package(MockCheckout::CVS_LIMIT + 1);
+        $this->actingAs($player, 'shop')->post(route('shop.orders.create'), ['package_id' => $large->id, 'method' => 'cvs'])->assertSessionHasErrors('method');
 
         $this->actingAs($player, 'shop')->post(route('shop.orders.create'), ['package_id' => $package->id, 'method' => 'bitcoin'])->assertSessionHasErrors('method');
         $this->actingAs($player, 'shop')->post(route('shop.orders.create'), [])->assertSessionHasErrors(['package_id' => '請選擇儲值方案']);
         $this->assertSame(1, Order::count());
+    }
+
+    public function test_order_page_refreshes_only_while_waiting_for_notice(): void
+    {
+        $order = $this->order($this->player());
+        $player = Player::findOrFail($order->player_id);
+        $refresh = '<meta http-equiv="refresh" content="1">';
+
+        // 還沒付款：不自動更新。
+        $this->actingAs($player, 'shop')->get(route('shop.orders.show', $order->order_no))
+            ->assertOk()->assertDontSee($refresh, false)->assertSee('這筆訂單還沒付款');
+
+        // 竄改通知回付款頁，訂單仍是待付款，訂單頁也不自動更新。
+        $this->pay($order, ['method' => 'advanced', 'scenario' => 'bad_signature'])
+            ->assertRedirect(route('mock.pay.show', $order->order_no))->assertSessionHas('status');
+        $this->actingAs($player, 'shop')->get(route('shop.orders.show', $order->order_no))->assertDontSee($refresh, false);
+
+        // 通知遲遲沒到（佇列不執行）：等待期間自動更新，超過期限停止並提示。
+        Queue::fake();
+        $this->pay($order, $this->card(['card_number' => '4000 0000 0000 0036']))->assertRedirect(route('shop.orders.show', $order->order_no));
+        $this->actingAs($player, 'shop')->get(route('shop.orders.show', $order->order_no))->assertOk()->assertSee($refresh, false);
+        $this->travel(config('topup.mock_delay_seconds') + 31)->seconds();
+        $this->actingAs($player, 'shop')->get(route('shop.orders.show', $order->order_no))
+            ->assertOk()->assertDontSee($refresh, false)->assertSee('還沒收到金流通知');
+    }
+
+    public function test_amount_mismatch_stops_further_payment(): void
+    {
+        $gamePlayer = $this->player();
+        $before = $this->wallet($gamePlayer)[0];
+        $order = $this->order($gamePlayer);
+        $player = Player::findOrFail($order->player_id);
+
+        $this->pay($order, ['method' => 'advanced', 'scenario' => 'amount_mismatch'])
+            ->assertRedirect(route('mock.pay.show', $order->order_no))->assertSessionHas('status');
+        $this->assertSame('pending', $order->fresh()->status);
+
+        // 玩家看到失敗，就不能再付款：付款頁沒有表單、訂單頁沒有「回付款頁」、伺服器也拒絕。
+        $this->actingAs($player, 'shop')->get(route('mock.pay.show', $order->order_no))
+            ->assertSee('不能再付款')->assertDontSee('id="card-form"', false);
+        $this->actingAs($player, 'shop')->get(route('shop.orders.show', $order->order_no))
+            ->assertOk()->assertSee('充值失敗，請聯繫客服')->assertSee('聯繫客服')
+            ->assertDontSee('回付款頁')->assertDontSee('<meta http-equiv="refresh" content="1">', false);
+        $this->pay($order, $this->card())->assertSessionHasErrors(['method' => '充值失敗，請聯繫客服，這筆訂單不能再付款']);
+        $this->assertSame('pending', $order->fresh()->status);
+        $this->assertSame($before, $this->wallet($gamePlayer)[0]);
+    }
+
+    public function test_order_accepts_only_one_payment(): void
+    {
+        $order = $this->order($this->player());
+
+        // 通知還沒到（佇列不執行）時再送一次付款：不會送出第二筆。
+        Queue::fake();
+        $this->pay($order, $this->card())->assertRedirect(route('shop.orders.show', $order->order_no));
+        $this->pay($order, $this->card())->assertSessionHasErrors(['method' => '這筆訂單已經送出付款，請等待結果']);
+        Queue::assertPushed(\App\Jobs\DeliverMockWebhook::class, 1);
+
+        // 付款頁也不再顯示表單。
+        $this->actingAs(Player::findOrFail($order->player_id), 'shop')->get(route('mock.pay.show', $order->order_no))
+            ->assertDontSee('id="card-form"', false);
+    }
+
+    public function test_game_order_cannot_be_paid_on_shop_payment_page(): void
+    {
+        $gamePlayer = $this->player();
+        $order = $this->order($gamePlayer);
+        $order->update(['source' => 'game', 'request_id' => (string) \Illuminate\Support\Str::uuid(), 'payment_method' => 'card']);
+        $player = Player::findOrFail($order->player_id);
+
+        $this->actingAs($player, 'shop')->get(route('mock.pay.show', $order->order_no))->assertNotFound();
+        $this->pay($order, $this->card())->assertNotFound();
+        $this->actingAs($player, 'shop')->get(route('shop.orders.show', $order->order_no))->assertOk()->assertDontSee('回付款頁');
+        $this->assertNull($order->fresh()->payment_submitted_at);
+    }
+
+    public function test_claim_rechecks_status_and_expiry_in_the_database(): void
+    {
+        $expiring = $this->order($this->player());
+        $cancelled = $this->order($this->player('bob'));
+
+        // 記憶體裡的訂單還是待付款，但資料庫已經逾期或改了狀態。
+        Order::whereKey($expiring->id)->update(['expires_at' => now()->subSecond()]);
+        Order::whereKey($cancelled->id)->update(['status' => 'expired']);
+
+        $this->assertFalse($expiring->claimPayment());
+        $this->assertFalse($cancelled->claimPayment());
+        $this->assertNull($expiring->fresh()->payment_submitted_at);
     }
 
     public function test_unknown_method_or_scenario_is_rejected(): void

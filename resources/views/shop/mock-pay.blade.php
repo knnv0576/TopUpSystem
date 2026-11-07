@@ -1,7 +1,12 @@
 @extends('shop.layout')
 @section('title', '模擬付款')
 @section('content')
-@php($method = old('method', in_array(request('method'), ['card', 'atm', 'cvs'], true) ? request('method') : 'card'))
+@php
+    // 選方案時已決定付款方式的訂單只顯示那一種；舊訂單沒有記錄，維持分頁讓玩家選。
+    $fixed = $order->payment_method;
+    $method = $fixed ?? old('method', in_array(request('method'), ['card', 'atm', 'cvs'], true) ? request('method') : 'card');
+    $shows = fn (string $panel) => $fixed === null || $fixed === $panel;
+@endphp
 <h1>模擬付款頁</h1>
 <div class="card">
     <p class="warning">這是模擬金流，不會產生真實交易。請勿輸入真實的信用卡或銀行資料，信用卡只接受下方列出的測試卡號。</p>
@@ -10,6 +15,9 @@
         <dt>方案</dt><dd>{{ $order->package_name }}</dd>
         <dt>應付金額</dt><dd>{{ number_format($order->amount) }} 元</dd>
         <dt>可得點數</dt><dd>{{ number_format($order->points) }} 點</dd>
+        @if ($fixed)
+            <dt>付款方式</dt><dd>{{ \App\Models\Order::PAYMENT_METHODS[$fixed] }}</dd>
+        @endif
         <dt>付款期限</dt><dd>{{ $order->expires_at->format('Y-m-d H:i') }}</dd>
     </dl>
 </div>
@@ -24,13 +32,16 @@
     <input class="tab-radio" type="radio" name="pay-tab" id="tab-card" @checked($method === 'card' || $method === 'advanced')>
     <input class="tab-radio" type="radio" name="pay-tab" id="tab-atm" @checked($method === 'atm')>
     <input class="tab-radio" type="radio" name="pay-tab" id="tab-cvs" @checked($method === 'cvs')>
+    @if ($fixed === null)
     <div class="tab-labels" role="tablist">
         <label for="tab-card" role="tab">信用卡</label>
         <label for="tab-atm" role="tab">ATM 虛擬帳號</label>
         <label for="tab-cvs" role="tab">超商代碼</label>
     </div>
+    @endif
 
     {{-- 信用卡 --}}
+    @if ($shows('card'))
     <section class="pay-panel panel-card" aria-label="信用卡付款">
         <form method="post" action="{{ route('mock.pay.submit', $order->order_no) }}" class="pay-form" id="card-form" novalidate>
             @csrf
@@ -75,25 +86,11 @@
                 </tbody>
             </table>
         </div>
-
-        <details class="advanced" @if ($method === 'advanced') open @endif>
-            <summary>進階測試：模擬金流通知被竄改</summary>
-            <p class="muted">不需要付款資料，直接送出一筆異常的 Webhook，用來測試系統是否會擋下。</p>
-            <form method="post" action="{{ route('mock.pay.submit', $order->order_no) }}">
-                @csrf
-                <input type="hidden" name="method" value="advanced">
-                <label for="scenario">異常情境</label>
-                <select id="scenario" name="scenario">
-                    @foreach ($advanced as $value => $label)
-                        <option value="{{ $value }}">{{ $label }}</option>
-                    @endforeach
-                </select>
-                <div class="actions"><button type="submit" class="secondary">送出異常通知</button></div>
-            </form>
-        </details>
     </section>
+    @endif
 
     {{-- ATM 虛擬帳號 --}}
+    @if ($shows('atm'))
     <section class="pay-panel panel-atm" aria-label="ATM 虛擬帳號付款">
         <p>請在期限內以 ATM 或網路銀行轉帳到下面的虛擬帳號。虛擬帳號只對應這筆訂單，金額不符會轉帳失敗。</p>
         <dl class="facts">
@@ -118,8 +115,10 @@
             <div class="actions"><button type="submit">模擬轉帳</button></div>
         </form>
     </section>
+    @endif
 
     {{-- 超商代碼 --}}
+    @if ($shows('cvs'))
     <section class="pay-panel panel-cvs" aria-label="超商代碼付款">
         @if (! $cvsAvailable)
             <p class="warning">超商代碼單筆上限 {{ number_format($cvsLimit) }} 元，這筆訂單請改用其他付款方式。</p>
@@ -145,6 +144,24 @@
             </form>
         @endif
     </section>
+    @endif
+
+    {{-- 不屬於任何付款方式，所以放在付款區塊外面 --}}
+    <details class="advanced" @if (old('method') === 'advanced') open @endif>
+        <summary>進階測試：模擬金流通知被竄改</summary>
+        <p class="muted">不需要付款資料，直接送出一筆異常的 Webhook，用來測試系統是否會擋下。</p>
+        <form method="post" action="{{ route('mock.pay.submit', $order->order_no) }}">
+            @csrf
+            <input type="hidden" name="method" value="advanced">
+            <label for="scenario">異常情境</label>
+            <select id="scenario" name="scenario">
+                @foreach ($advanced as $value => $label)
+                    <option value="{{ $value }}">{{ $label }}</option>
+                @endforeach
+            </select>
+            <div class="actions"><button type="submit" class="secondary">送出異常通知</button></div>
+        </form>
+    </details>
 </div>
 @endif
 <script src="/mock-pay.js" defer></script>

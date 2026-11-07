@@ -23,9 +23,13 @@
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="BROADCAST_CONNECTION" value="null"/>
         <env name="CACHE_STORE" value="array"/>
-        <env name="DB_CONNECTION" value="pgsql"/>
+        <!-- 測試每次都要重建資料表，用擁有者連線；應用程式帳號的權限另有測試檢查。 -->
+        <env name="DB_CONNECTION" value="pgsql_owner"/>
         <env name="DB_DATABASE" value="topup_test"/>
         <env name="DB_URL" value=""/>
+        <!-- 測試產生的紀錄不寫進實際的日誌檔。 -->
+        <env name="LOG_CHANNEL" value="null"/>
+        <env name="LOG_SECURITY_ENABLED" value="false"/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
         <env name="SESSION_DRIVER" value="array"/>

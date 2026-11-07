@@ -11,6 +11,8 @@ use App\Payments\MockGateway;
 use App\Services\OrderService;
 use App\Models\Player;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Mockery;
 use Tests\TestCase;
 
 class PaymentFlowTest extends TestCase
@@ -153,14 +155,45 @@ class PaymentFlowTest extends TestCase
             $before = $this->wallet($player)[0];
             $order = $this->order($player, 100);
 
+            // 竄改的通知會被拒絕，回付款頁顯示結果，不到訂單頁等待。
             $this->actingAs($shopPlayer, 'shop')
                 ->post(route('mock.pay.submit', $order->order_no), $form)
-                ->assertRedirect(route('shop.orders.show', $order->order_no));
+                ->assertRedirect($form['method'] === 'advanced' ? route('mock.pay.show', $order->order_no) : route('shop.orders.show', $order->order_no));
 
             $this->assertSame($status, $order->fresh()->status, $scenario);
             $this->assertSame($before + ($status === 'fulfilled' ? 10000 : 0), $this->wallet($player)[0], $scenario);
         }
         $this->assertLedgerConsistent();
+    }
+
+    public function test_rejected_webhook_is_written_to_security_log(): void
+    {
+        $order = $this->order($this->player());
+        $security = Mockery::spy();
+        Log::partialMock()->shouldReceive('channel')->with('security')->andReturn($security);
+
+        $payload = $this->paymentEvent($order, ['event_id' => str_repeat('x', 100)]);
+        $this->sendWebhook($payload, str_repeat('0', 64))->assertStatus(401);
+
+        // 只記聲稱的編號，且截斷長度；不入點、不寫入金流事件。
+        $security->shouldHaveReceived('warning')->once()->with('webhook.rejected', Mockery::on(fn (array $context) => $context['provider'] === 'mock'
+            && $context['claimed_order_no'] === $order->order_no
+            && $context['claimed_event_id'] === str_repeat('x', 64)
+            && $context['claimed_type'] === 'payment.succeeded'
+            && ! array_key_exists('amount', $context)));
+        $this->assertSame('pending', $order->fresh()->status);
+        $this->assertSame(0, DB::table('gateway_events')->count());
+    }
+
+    public function test_tests_do_not_write_to_real_security_log(): void
+    {
+        $file = storage_path('logs/security-'.now()->format('Y-m-d').'.log');
+        $before = is_file($file) ? filesize($file) : 0;
+
+        Log::channel('security')->warning('webhook.rejected', ['note' => '測試不應寫入']);
+        clearstatcache();
+
+        $this->assertSame($before, is_file($file) ? filesize($file) : 0);
     }
 
     public function test_other_players_order_is_not_visible(): void

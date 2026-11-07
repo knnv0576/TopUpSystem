@@ -52,6 +52,7 @@
         {{-- 付款方式 --}}
         <section class="card">
             <h2 class="section-title">支付方式</h2>
+            @error('method')<p class="field-error">{{ $message }}</p>@enderror
             <div class="method-grid" role="radiogroup" aria-label="付款方式">
                 @foreach ($methods as $value => [$label, $hint])
                     <label class="method-card">
@@ -66,7 +67,7 @@
                     </label>
                 @endforeach
             </div>
-            <p class="muted">下一步會進到模擬付款頁輸入付款資料；在付款頁也可以改用其他方式。</p>
+            <p class="muted">下一步會進到模擬付款頁輸入付款資料。付款方式送出後不能更改，要換方式請重新下單。</p>
         </section>
     </div>
 

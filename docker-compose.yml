@@ -91,8 +91,9 @@ services:
     image: postgres:18-alpine@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5
     environment:
       POSTGRES_DB: ${DB_DATABASE}
-      POSTGRES_USER: ${DB_USERNAME}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      # 容器的管理帳號就是資料表擁有者；應用程式用的 DB_USERNAME 由 migration 另外建立。
+      POSTGRES_USER: ${DB_OWNER_USERNAME}
+      POSTGRES_PASSWORD: ${DB_OWNER_PASSWORD}
     volumes:
       - pgdata:/var/lib/postgresql
       - ./docker/postgres/create-test-db.sql:/docker-entrypoint-initdb.d/create-test-db.sql:ro

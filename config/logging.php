@@ -73,13 +73,17 @@ return [
             'replace_placeholders' => true,
         ],
 
-        // 玩家端的安全事件（登入、登出、註冊、鎖定）。後台與交易事件記錄在 audit_logs。
-        'security' => [
+        // 玩家端的安全事件（登入、登出、註冊、鎖定）與被拒絕的金流通知。後台與交易事件記錄在 audit_logs。
+        // 測試時設 LOG_SECURITY_ENABLED=false：假事件不能混進實際的安全日誌。
+        'security' => env('LOG_SECURITY_ENABLED', true) ? [
             'driver' => 'daily',
             'path' => storage_path('logs/security.log'),
             'level' => 'info',
             'max_files' => env('LOG_SECURITY_DAYS', 90),
             'replace_placeholders' => true,
+        ] : [
+            'driver' => 'monolog',
+            'handler' => NullHandler::class,
         ],
 
         'monthly' => [

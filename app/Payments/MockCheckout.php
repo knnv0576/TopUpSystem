@@ -43,6 +43,9 @@ final class MockCheckout
     /** 超商代碼的單筆上限（元）。 */
     public const CVS_LIMIT = 20000;
 
+    /** 付款資料欄位；只把這些交給驗證，其他輸入一律忽略。 */
+    public const PAYMENT_FIELDS = ['card_name', 'card_number', 'card_expiry', 'card_cvv', 'atm_bank', 'atm_account', 'atm_amount', 'cvs_code', 'cvs_amount'];
+
     public static function digits(string $value): string
     {
         return preg_replace('/[\s-]/', '', $value) ?? '';
@@ -151,6 +154,79 @@ final class MockCheckout
         return [$errors, $errors === [] ? self::TEST_CARDS[$number][1] : null];
     }
 
+    /**
+     * 依付款方式驗證付款資料，回傳 [錯誤（欄位 => 訊息）, 付款情境]。付款頁與遊戲內充值共用。
+     *
+     * @return array{0: array<string, string>, 1: ?string}
+     */
+    public static function validatePayment(Order $order, string $method, array $input, Carbon $now): array
+    {
+        // 欄位只接受文字；陣列等其他型別當成沒填。
+        $input = array_map(fn ($value) => is_scalar($value) ? (string) $value : '', $input);
+
+        return match ($method) {
+            'card' => self::validateCard($input, $now),
+            'atm' => self::validateAtm($order, $input),
+            'cvs' => self::validateCvs($order, $input),
+        };
+    }
+
+    /** @return array{0: array<string, string>, 1: ?string} */
+    private static function validateAtm(Order $order, array $input): array
+    {
+        $errors = [];
+        $bank = trim((string) ($input['atm_bank'] ?? ''));
+        $account = self::digits((string) ($input['atm_account'] ?? ''));
+
+        if (! preg_match('/^\d{3}$/', $bank)) {
+            $errors['atm_bank'] = '轉入銀行代碼必須是 3 位數字';
+        } elseif ($bank !== self::ATM_BANK_CODE) {
+            $errors['atm_bank'] = '轉入銀行代碼不正確';
+        }
+        if (! preg_match('/^\d{14}$/', $account)) {
+            $errors['atm_account'] = '轉入帳號必須是 14 位數字';
+        } elseif ($account !== self::virtualAccount($order)) {
+            $errors['atm_account'] = '轉入帳號與這筆訂單的虛擬帳號不符';
+        }
+        $errors += self::amountError('atm_amount', (string) ($input['atm_amount'] ?? ''), $order, '轉帳金額');
+
+        return [$errors, $errors === [] ? 'success' : null];
+    }
+
+    /** @return array{0: array<string, string>, 1: ?string} */
+    private static function validateCvs(Order $order, array $input): array
+    {
+        if ($reason = self::methodUnavailableReason('cvs', $order->amount)) {
+            return [['method' => $reason], null];
+        }
+
+        $errors = [];
+        $code = strtoupper(self::digits((string) ($input['cvs_code'] ?? '')));
+
+        if (! preg_match('/^[A-Z0-9]{14}$/', $code)) {
+            $errors['cvs_code'] = '繳費代碼必須是 14 個英文字母或數字';
+        } elseif ($code !== self::storeCode($order)) {
+            $errors['cvs_code'] = '繳費代碼與這筆訂單不符';
+        }
+        $errors += self::amountError('cvs_amount', (string) ($input['cvs_amount'] ?? ''), $order, '繳費金額');
+
+        return [$errors, $errors === [] ? 'success' : null];
+    }
+
+    /** @return array<string, string> */
+    private static function amountError(string $field, string $amount, Order $order, string $label): array
+    {
+        $amount = trim($amount);
+        if (! preg_match('/^\d{1,9}$/', $amount)) {
+            return [$field => "{$label}必須是整數"];
+        }
+        if ((int) $amount !== $order->amount) {
+            return [$field => "{$label}必須等於應繳金額 ".number_format($order->amount).' 元'];
+        }
+
+        return [];
+    }
+
     /** 14 碼虛擬帳號：由訂單編號導出，同一張訂單固定不變，最後一碼是檢查碼。 */
     public static function virtualAccount(Order $order): string
     {
@@ -185,6 +261,14 @@ final class MockCheckout
     public static function cvsAvailable(Order $order): bool
     {
         return $order->amount <= self::CVS_LIMIT;
+    }
+
+    /** 這個金額不能用這種付款方式時回傳原因；選方案、建立訂單與付款都用同一個判斷。 */
+    public static function methodUnavailableReason(string $method, int $amount): ?string
+    {
+        return $method === 'cvs' && $amount > self::CVS_LIMIT
+            ? '超商代碼單筆上限 '.number_format(self::CVS_LIMIT).' 元，請改用其他付款方式'
+            : null;
     }
 
     private static function hash(string $purpose, Order $order): string

@@ -20,6 +20,9 @@ use Throwable;
 /** 玩家的轉盤畫面。結果與獎勵都只由伺服器計算，請求只帶檔位和玩家的種子。 */
 class WheelController
 {
+    /** 遊戲內充值轉送給充值端的付款資料欄位，其他輸入一律不轉送。 */
+    private const PAYMENT_FIELDS = ['card_name', 'card_number', 'card_expiry', 'card_cvv', 'atm_bank', 'atm_account', 'atm_amount', 'cvs_code', 'cvs_amount'];
+
     public function __construct(private WheelService $wheel, private TopupClient $topup) {}
 
     public function index(): View
@@ -82,12 +85,17 @@ class WheelController
         ]);
     }
 
+    /** 建立訂單，還不付款；付款資料由彈窗另外送出。 */
     public function createTopup(Request $request): JsonResponse
     {
-        $data = $request->validate(['package_id' => 'required|integer', 'request_id' => 'required|uuid']);
+        $data = $request->validate([
+            'package_id' => 'required|integer',
+            'request_id' => 'required|uuid',
+            'method' => 'required|in:card,atm,cvs',
+        ], ['method.*' => '請選擇付款方式']);
 
         try {
-            $response = $this->topup->createGameOrder(Auth::guard('game')->id(), $data['request_id'], (int) $data['package_id']);
+            $response = $this->topup->createGameOrder(Auth::guard('game')->id(), $data['request_id'], (int) $data['package_id'], $data['method']);
         } catch (ConnectionException) {
             return $this->topupUnknown();
         }
@@ -96,6 +104,27 @@ class WheelController
             $response->successful() => response()->json($this->presentTopup($response->json()), 201),
             $response->status() === 422 => response()->json(['message' => $response->json('error') ?? PlayerMessages::TOPUP_FAILED], 422),
             default => $this->topupUnknown(),
+        };
+    }
+
+    /**
+     * 把付款資料轉送給充值端驗證並付款。卡號與安全碼只經過這個請求，不寫入資料庫、日誌或 session。
+     * 連線中斷時不確定有沒有送出，讓玩家查詢狀態，不自動重送，避免重複付款。
+     */
+    public function payTopup(Request $request, string $orderNo): JsonResponse
+    {
+        try {
+            $response = $this->topup->payGameOrder(Auth::guard('game')->id(), $orderNo, $request->only(self::PAYMENT_FIELDS));
+        } catch (ConnectionException) {
+            return response()->json(['message' => '連線異常，無法確認付款是否送出，請稍候查看充值結果', 'uncertain' => true], 503);
+        }
+
+        return match (true) {
+            $response->successful() => response()->json($this->presentTopup($response->json())),
+            $response->status() === 404 => response()->json(['message' => '找不到這筆訂單'], 404),
+            $response->status() === 422 => response()->json(['message' => '付款資料有誤，請檢查後再送出', 'errors' => $response->json('errors') ?? []], 422),
+            $response->status() === 409 => response()->json(['message' => $response->json('error') ?? PlayerMessages::TOPUP_FAILED], 409),
+            default => response()->json(['message' => '連線異常，無法確認付款是否送出，請稍候查看充值結果', 'uncertain' => true], 503),
         };
     }
 
@@ -130,10 +159,17 @@ class WheelController
             'message' => match ($order['state']) {
                 'success' => '充值完成，已取得 '.number_format($order['points']).' 點',
                 'failed' => PlayerMessages::TOPUP_FAILED,
+                'awaiting_payment' => '請輸入付款資料',
+                'expired' => '訂單已逾期，沒有付款，請重新充值',
                 default => '充值處理中',
             },
             'available' => $this->available(),
-        ];
+        ] + (isset($order['payment']) ? [
+            'package_name' => $order['package_name'],
+            'amount' => $order['amount'],
+            'points' => $order['points'],
+            'payment' => $order['payment'],
+        ] : []);
     }
 
     /** 依狀態決定能給玩家看什麼：扣點成功前沒有結果，結算前沒有伺服器種子。 */

@@ -4,6 +4,7 @@ namespace Tests;
 
 use App\DemoGame\Models\GamePlayer;
 use App\DemoGame\Services\WalletService;
+use App\Http\Middleware\EnsureAdmin;
 use App\Models\AdminUser;
 use App\Models\Order;
 use App\Models\Package;
@@ -12,6 +13,7 @@ use App\Models\RefundRequest;
 use App\Payments\MockGateway;
 use App\Services\OrderService;
 use App\Services\RefundService;
+use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
 use Illuminate\Http\Client\Request as ClientRequest;
@@ -54,6 +56,18 @@ abstract class TestCase extends BaseTestCase
 
             return Http::response($response->getContent(), $response->getStatusCode());
         });
+    }
+
+    /** 實際登入會在通過 TOTP 時寫入登入時間；模擬後台登入時一併寫入，否則會被視為過期。 */
+    public function actingAs(Authenticatable $user, $guard = null)
+    {
+        parent::actingAs($user, $guard);
+
+        if ($guard === 'admin') {
+            $this->withSession([EnsureAdmin::AUTHENTICATED_AT => now()->getTimestamp()]);
+        }
+
+        return $this;
     }
 
     protected function player(string $name = 'alice', int $points = 0): GamePlayer

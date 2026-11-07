@@ -8,11 +8,13 @@ use App\Models\Package;
 use App\Models\Player;
 use App\Models\PlayerBankAccount;
 use App\Models\RefundRequest;
+use App\Payments\MockCheckout;
 use App\Services\BankAccountService;
 use App\Services\GameTopupService;
 use App\Services\RefundService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 use RuntimeException;
 
 /** 玩家端呼叫的簽章 API。回傳內容不含審核層級、管理員身分與完整帳號。 */
@@ -121,13 +123,17 @@ class TopupApiController
         return response()->json(['data' => $packages]);
     }
 
-    /** 遊戲內充值。這裡不接受付款情境參數，結果只由伺服器決定。 */
+    /** 遊戲內充值：只建立訂單，付款另外送出。不接受付款情境參數，結果由付款資料決定。 */
     public function createGameOrder(Request $request, int $gamePlayerId, GameTopupService $topups): JsonResponse
     {
-        $data = $request->validate(['request_id' => 'required|uuid', 'package_id' => 'required|integer']);
+        $data = $request->validate([
+            'request_id' => 'required|uuid',
+            'package_id' => 'required|integer',
+            'method' => ['required', Rule::in(array_keys(Order::PAYMENT_METHODS))],
+        ]);
 
         try {
-            $order = $topups->create($gamePlayerId, $data['request_id'], $data['package_id']);
+            $order = $topups->create($gamePlayerId, $data['request_id'], $data['package_id'], $data['method']);
         } catch (RuntimeException $e) {
             return response()->json(['error' => $e->getMessage()], 422);
         }
@@ -137,14 +143,38 @@ class TopupApiController
 
     public function gameOrder(int $gamePlayerId, string $orderNo): JsonResponse
     {
-        $order = Order::where('order_no', $orderNo)
-            ->where('source', 'game')
-            ->whereHas('player', fn ($q) => $q->where('game_player_id', $gamePlayerId))
-            ->first();
+        $order = $this->findGameOrder($gamePlayerId, $orderNo);
 
         return $order
             ? response()->json($this->presentGameOrder($order))
             : response()->json(['error' => 'not_found'], 404);
+    }
+
+    /** 付款資料只交給驗證，不寫入資料庫或日誌；錯誤訊息不帶出輸入的內容。 */
+    public function payGameOrder(Request $request, int $gamePlayerId, string $orderNo, GameTopupService $topups): JsonResponse
+    {
+        $order = $this->findGameOrder($gamePlayerId, $orderNo);
+        if (! $order) {
+            return response()->json(['error' => 'not_found'], 404);
+        }
+
+        try {
+            $errors = $topups->pay($order, $request->only(MockCheckout::PAYMENT_FIELDS));
+        } catch (RuntimeException $e) {
+            return response()->json(['error' => $e->getMessage()], 409);
+        }
+
+        return $errors === []
+            ? response()->json($this->presentGameOrder($order->fresh()))
+            : response()->json(['error' => 'invalid_payment', 'errors' => $errors], 422);
+    }
+
+    private function findGameOrder(int $gamePlayerId, string $orderNo): ?Order
+    {
+        return Order::where('order_no', $orderNo)
+            ->where('source', 'game')
+            ->whereHas('player', fn ($q) => $q->where('game_player_id', $gamePlayerId))
+            ->first();
     }
 
     private function presentGameOrder(Order $order): array
@@ -152,6 +182,8 @@ class TopupApiController
         $state = match (true) {
             $order->status === 'fulfilled' => 'success',
             $order->failedForPlayer() => 'failed',
+            $order->isPayable() => 'awaiting_payment',
+            $order->status === 'expired' => 'expired',
             default => 'processing',
         };
 
@@ -161,7 +193,21 @@ class TopupApiController
             'amount' => $order->amount,
             'points' => $order->points,
             'state' => $state,
-        ];
+        ] + ($state === 'awaiting_payment' ? ['payment' => $this->paymentInstructions($order)] : []);
+    }
+
+    /** 彈窗顯示的付款資訊：與付款頁相同，由訂單導出。 */
+    private function paymentInstructions(Order $order): array
+    {
+        return ['method' => $order->payment_method, 'expires_at' => $order->expires_at->format('Y-m-d H:i')] + match ($order->payment_method) {
+            'card' => ['test_cards' => array_map(
+                fn (string $number, array $card) => ['number' => $number, 'display' => MockCheckout::group($number), 'brand' => MockCheckout::BRANDS[$card[0]], 'label' => $card[2]],
+                array_keys(MockCheckout::TEST_CARDS),
+                MockCheckout::TEST_CARDS,
+            )],
+            'atm' => ['bank' => MockCheckout::ATM_BANK_CODE, 'account' => MockCheckout::virtualAccount($order)],
+            'cvs' => ['code' => MockCheckout::storeCode($order), 'limit' => MockCheckout::CVS_LIMIT],
+        };
     }
 
     private function present(RefundRequest $refund): array

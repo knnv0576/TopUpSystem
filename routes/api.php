@@ -41,4 +41,5 @@ Route::prefix('api/topup')->middleware(['throttle:600,1', 'api.signature:topup_a
     Route::post('packages', [TopupApiController::class, 'packages']);
     Route::post('players/{gamePlayerId}/game-orders', [TopupApiController::class, 'createGameOrder'])->whereNumber('gamePlayerId');
     Route::post('players/{gamePlayerId}/game-orders/{orderNo}', [TopupApiController::class, 'gameOrder'])->whereNumber('gamePlayerId');
+    Route::post('players/{gamePlayerId}/game-orders/{orderNo}/pay', [TopupApiController::class, 'payGameOrder'])->whereNumber('gamePlayerId');
 });

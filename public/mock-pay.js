@@ -145,21 +145,22 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 
     // 「填入」按鈕：帶入測試卡號，其他空白欄位補上可用的測試值。
-    document.querySelectorAll('[data-fill-card]').forEach(function (button) {
-      button.addEventListener('click', function () {
-        var n = button.dataset.fillCard;
-        number.value = n;
-        onNumberInput();
-        var name = document.getElementById('card_name');
-        if (name.value.trim() === '') name.value = 'TEST USER';
-        if (expiry.value.trim() === '' || checks.expiry(expiry.value) !== '') {
-          var d = new Date();
-          expiry.value = ('0' + (d.getMonth() + 1)).slice(-2) + '/' + String((d.getFullYear() + 3) % 100).padStart(2, '0');
-        }
-        cvv.value = brand(n) === 'amex' ? '1234' : '123';
-        [name, number, expiry, cvv].forEach(check);
-        number.scrollIntoView({ block: 'center' });
-      });
+    // 用事件委派，之後才加進頁面的按鈕（遊戲內充值彈窗）也適用。
+    document.addEventListener('click', function (event) {
+      var button = event.target.closest('[data-fill-card]');
+      if (!button) return;
+      var n = button.dataset.fillCard;
+      number.value = n;
+      onNumberInput();
+      var name = document.getElementById('card_name');
+      if (name.value.trim() === '') name.value = 'TEST USER';
+      if (expiry.value.trim() === '' || checks.expiry(expiry.value) !== '') {
+        var d = new Date();
+        expiry.value = ('0' + (d.getMonth() + 1)).slice(-2) + '/' + String((d.getFullYear() + 3) % 100).padStart(2, '0');
+      }
+      cvv.value = brand(n) === 'amex' ? '1234' : '123';
+      [name, number, expiry, cvv].forEach(check);
+      number.scrollIntoView({ block: 'center' });
     });
   }
 

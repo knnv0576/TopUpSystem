@@ -13,6 +13,7 @@ if (file_exists($target) && ! in_array('--force', $argv, true)) {
 $generators = [
     'APP_KEY' => fn () => 'base64:'.base64_encode(random_bytes(32)),
     'DB_PASSWORD' => fn () => bin2hex(random_bytes(24)),
+    'DB_OWNER_PASSWORD' => fn () => bin2hex(random_bytes(24)),
     'GAME_API_SECRET' => fn () => bin2hex(random_bytes(32)),
     'TOPUP_API_SECRET' => fn () => bin2hex(random_bytes(32)),
     'MOCK_GATEWAY_SECRET' => fn () => bin2hex(random_bytes(32)),

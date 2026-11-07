@@ -17,11 +17,15 @@
 
 ```sh
 docker compose build app
+docker compose run --rm --no-deps -T app php docker/init-env.php   # 產生 .env 與隨機密鑰（要在 init 之前，否則套件安裝的最後一步會失敗）
 docker compose run --rm --no-deps -T init                          # 憑證、目錄權限，並把套件安裝到 vendor volume
-docker compose run --rm --no-deps -T app php docker/init-env.php   # 產生 .env 與隨機密鑰
 docker compose up -d
-docker compose exec app php artisan migrate --seed --force   # 會顯示管理員的初始密碼，只顯示這一次
+docker compose exec app php artisan migrate --seed --force --database=pgsql_owner   # 會顯示管理員的初始密碼，只顯示這一次
 ```
+
+**資料庫帳號**：應用程式平常用 `DB_USERNAME`（`topup_app`），只有讀寫資料的權限，不是資料表擁有者，改不了結構與觸發器。資料表擁有者 `DB_OWNER_USERNAME` 只給 migration 使用，所以 migration 一律加上 `--database=pgsql_owner`；忘了加會因為權限不足而失敗，不會改到任何東西。應用程式帳號由 migration 建立，密碼取自 `DB_PASSWORD`。
+
+從舊版升級（`.env` 裡還沒有 `DB_OWNER_USERNAME`）：把原本的 `DB_USERNAME`、`DB_PASSWORD` 改名為 `DB_OWNER_USERNAME`、`DB_OWNER_PASSWORD`，再新增 `DB_USERNAME=topup_app` 與一組新的隨機 `DB_PASSWORD`（至少 16 個字元），然後執行 migration 並重啟 `app queue scheduler`。
 
 開啟 <https://localhost:8443>。憑證是自簽的，瀏覽器會顯示警告，這是本機環境的正常現象。
 
@@ -111,7 +115,12 @@ committed → debit_pending → payout_pending → settled
 
 **公平性驗證**：開局前公布伺服器種子的雜湊，結算後公開種子，玩家可以在紀錄頁用瀏覽器自行驗算。這能證明結果未被事後更改，不能證明賠率符合宣稱；賠率由功能測試窮舉檢查。
 
-**遊戲內充值**：不接真實金流，但走完整的訂單、模擬金流 Webhook 與入點流程，方案沿用後台上架方案。請求不能指定付款情境，一律付款成功；覆核者可在測試面板設定下一次為失敗。玩家看到的失敗一律是「充值失敗，請聯繫客服」，實際狀態在後台看。
+**遊戲內充值**：不接真實金流，但走完整的訂單、模擬付款、模擬金流 Webhook 與入點流程，方案沿用後台上架方案。按下方案後跳出彈窗：選付款方式（信用卡、ATM 虛擬帳號或超商代碼）→ 建立訂單 → 在彈窗輸入付款資料 → 等待結果。付款資料的驗證與測試卡號都和模擬付款頁相同，由遊戲端以簽章 API 轉送給充值端驗證，不寫入資料庫、日誌或 session，送出後畫面上的卡號與安全碼會清空。
+
+- 請求不能指定付款情境，結果由付款資料決定（例如測試卡號）。覆核者可在測試面板設定下一次的結果，會蓋過付款資料，只生效一次。
+- 一張訂單只能送出一次付款，同時送出也只有一個生效。
+- 沒付款就關掉彈窗，訂單逾期後顯示「已過期」；送出付款後卻逾期才算失敗。
+- 玩家看到的失敗一律是「充值失敗，請聯繫客服」，包括發卡行拒絕；實際狀態在後台看。
 
 **帳務核對**：後台「小遊戲」頁，或執行下面的指令。只讀取、不修改資料，會比對帳本與錢包、已完成訂單與入點、每一局與帳目、作廢後沒有扣點，以及檢查碼。有不一致時回傳非 0。
 
@@ -119,7 +128,7 @@ committed → debit_pending → payout_pending → settled
 docker compose exec app php artisan minigame:check
 ```
 
-已有資料的環境要先執行 `docker compose exec app php artisan migrate --force`，並用 `docker compose restart queue scheduler` 讓背景工作載入新程式。
+已有資料的環境要先執行 `docker compose exec app php artisan migrate --force --database=pgsql_owner`，並用 `docker compose restart queue scheduler` 讓背景工作載入新程式。
 
 **客服**：玩家從玩家中心或充值網站的「客服」提出問題（類別、主旨、描述，可選擇相關訂單與回覆通知 Email），失敗的訂單頁也有「聯繫客服」。訊息裡出現卡號（通過 Luhn 檢查的 13 到 19 位數字）會被拒絕。初審與覆核都能在後台「客服工單」回覆或結案；玩家回覆後工單回到待處理，已結案的工單不能再回覆。新工單與玩家回覆會通知 `SUPPORT_INBOX`，客服回覆會通知玩家留下的 Email，信件都由佇列寄到 Mailpit。`MAIL_MAILER` 只允許 `smtp`（且主機必須是 `mailpit`）、`array`、`log`，設定成其他值時應用程式拒絕啟動。
 
@@ -145,7 +154,7 @@ docker compose exec app php artisan test
 docker compose exec app php tests/e2e/concurrency.php
 
 # 真實瀏覽器的端對端流程（需要本機 Chrome；會先清空開發資料）
-docker compose exec app php artisan migrate:fresh --seed --force
+docker compose exec app php artisan migrate:fresh --seed --force --database=pgsql_owner
 docker compose restart queue scheduler
 npm install --prefix <暫存資料夾> playwright-core
 NODE_PATH=<暫存資料夾>/node_modules node tests/e2e/browser-e2e.cjs <截圖資料夾>
@@ -212,11 +221,14 @@ NODE_PATH=<暫存資料夾>/node_modules node tests/e2e/browser-e2e.cjs <截圖�
 
 - 對外只綁定 `127.0.0.1:8443`；PostgreSQL 不對外。
 - 後台：密碼 + TOTP + IP 白名單。白名單只看連線來源 IP，不採用 `X-Forwarded-For`。
-- 高風險操作（核准退款、結案還點、核准調整、停權與解除、補入點、停用帳號）要再驗證一次 TOTP。
+- 後台使用獨立的 session cookie（`demo-admin-session`，只送往 `/admin`，關閉瀏覽器即失效），和玩家端互不共用。閒置 15 分鐘或登入超過 8 小時要重新登入（`ADMIN_IDLE_MINUTES`、`ADMIN_ABSOLUTE_HOURS`）。
+- 高風險操作（核准退款、結案還點、核准調整、停權與解除、補入點、停用帳號、新增與修改方案）要再驗證一次 TOTP。方案的稽核紀錄保留修改前後的名稱、價格與上下架狀態。
+- 應用程式的資料庫帳號只有讀寫權限，不是資料表擁有者也不是超級使用者：改不了結構與觸發器，不能修改或刪除稽核紀錄，也不能執行系統指令。功能測試會逐項檢查。
 - 管理員各有隨機初始密碼，首次登入必須更改；覆核者可以停用其他帳號。連續失敗 5 次鎖定 15 分鐘。
 - 玩家與管理員都可以改密碼。改密碼後，其他裝置會被登出並提示「帳號密碼已變更，請重新登入」，玩家的充值網站登入也會一起失效；改密碼的裝置保持登入。
 - 模擬帳號以 `APP_KEY` 加密儲存，結案後刪除密文，只留銀行代碼與後四碼。
-- 稽核紀錄只能新增，資料庫觸發器會拒絕更新、刪除與 `TRUNCATE`；登入成敗與來源 IP 都會記錄。
+- 稽核紀錄只能新增，資料庫觸發器會拒絕更新、刪除與 `TRUNCATE`；登入成敗與來源 IP 都會記錄。簽章錯誤的金流通知寫入 `security.log`（`webhook.rejected`）。
+- 功能測試不寫入實際的日誌檔（`LOG_CHANNEL=null`、`LOG_SECURITY_ENABLED=false`）。
 - 所有 PHP 程序以非 root 執行；例外堆疊不帶函式參數；映像鎖定 digest。
 
 做法與 ISO/IEC 27001:2022 控制項的對照、刻意不做的項目及理由，見 [docs/iso27001-mapping.md](docs/iso27001-mapping.md)。這不是合規證明。

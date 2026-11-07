@@ -307,13 +307,22 @@ $shopBuyer = Player::forGame($buyer->id);
 $requestId = (string) Str::uuid();
 $topupPath = "/api/topup/players/{$buyer->id}/game-orders";
 $codes = fire(array_map(function () use ($topupPath, $requestId, $package) {
-    $body = json_encode(['request_id' => $requestId, 'package_id' => $package->id]);
+    $body = json_encode(['request_id' => $requestId, 'package_id' => $package->id, 'method' => 'card']);
 
     return [$topupPath, ApiSignature::headers(config('topup.topup_api_secret'), 'POST', $topupPath, $body), $body];
 }, range(1, PARALLEL)));
 check('相同 request_id 全部回應成功', count(array_filter($codes, fn ($c) => $c === 201)) === PARALLEL, json_encode(array_count_values($codes)));
 $orders = Order::where('player_id', $shopBuyer->id)->get();
 check('相同 request_id 只有一張訂單', $orders->count() === 1, 'count='.$orders->count());
+
+// 同一張訂單同時送出付款：只有一個會送出。
+$payPath = "$topupPath/{$orders[0]->order_no}/pay";
+$codes = fire(array_map(function () use ($payPath) {
+    $body = json_encode(['card_name' => 'TEST USER', 'card_number' => '4111111111111111', 'card_expiry' => now()->addYear()->format('m/y'), 'card_cvv' => '123']);
+
+    return [$payPath, ApiSignature::headers(config('topup.topup_api_secret'), 'POST', $payPath, $body), $body];
+}, range(1, PARALLEL)));
+check('同時送出付款只有一個成功', count(array_filter($codes, fn ($c) => $c === 200)) === 1 && count(array_filter($codes, fn ($c) => $c === 409)) === PARALLEL - 1, json_encode(array_count_values($codes)));
 waitFor(fn () => $orders[0]->fresh()->status === 'fulfilled');
 check('充值只付款一次', Payment::where('order_id', $orders[0]->id)->count() === 1);
 check('充值只入點一次', $ledgerOf($buyer, 'topup') === 1 && (int) $buyer->wallet()->first()->balance === $orders[0]->points, 'balance='.$buyer->wallet()->first()->balance);
